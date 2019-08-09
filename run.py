@@ -3,7 +3,7 @@ import gym
 import numpy as np
 from collections import deque
 from keras.models import Sequential
-from keras.layers import Input, Conv2D, Dense, Flatten, Activation
+from keras.layers import Input, Conv2D, Dense, Flatten, Activation, BatchNormalization
 from keras.optimizers import Adam
 
 ENV_NAME = "SpaceInvaders-v0"
@@ -12,14 +12,14 @@ GAMMA = 0.95
 LEARNING_RATE = 0.001
 
 MEMORY_SIZE = 1000000
-BATCH_SIZE = 20
-APPLY_STEPS = 1
+BATCH_SIZE = 64
+APPLY_STEPS = 50
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.01
 EXPLORATION_DECAY = 0.995
 
-INPUT_SIZE = [84,84,1]
+INPUT_SIZE = [84,84,4]
 NUMBER_OF_ACTIONS = 6
 STATE_BUFFER_SIZE = 4
 
@@ -45,21 +45,28 @@ def get_batch_from_memory(idxs, memory, target_network):
 
 
 class DQNSolver:
-    def __init__(self):
-
-        conv1 = Conv2D(32,3, strides = (4,4))
-        conv2 = Conv2D(64,3, strides = (2,2))
-        conv3 = Conv2D(64,3, strides = (2,2))
+    def __init__(self, batch_norm = False):
+        #input to network will be (None, 84,84,4)
+        conv1 = Conv2D(16,8, strides = (4,4), activation = Activation("relu"))
+        bn1 = BatchNormalization()
+        conv2 = Conv2D(32,4, strides = (2,2), activation = Activation("relu"))
+        bn2 = BatchNormalization()
         flat_feature = Flatten()
-        fc1 = Dense(50, activation = Activation('relu'))
+        fc1 = Dense(256, activation = Activation('relu'))
+        bn3 = BatchNormalization()
         outputs = Dense(NUMBER_OF_ACTIONS)
 
         model = Sequential()
         model.add(conv1)
+        if(batch_norm):
+            model.add(bn1)
         model.add(conv2)
-        model.add(conv3)
+        if(batch_norm):
+            model.add(bn2)
         model.add(flat_feature)
         model.add(fc1)
+        if(batch_norm):
+            model.add(bn3)
         model.add(outputs)
 
         model.compile(optimizer = Adam(LEARNING_RATE), loss ="mse")
@@ -81,7 +88,7 @@ class DQNSolver:
 
     def next_move(self, state, epsilon):
         if random.random() < epsilon:
-            return np.random.randint(0,6)
+            return np.random.randint(0,NUMBER_OF_ACTIONS)
         else:
             return np.argmax(self.predict(state))
 
@@ -105,7 +112,7 @@ def spaceInvaders(episodes = 1000):
     for e in range(episodes):
         stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
         for _ in range(STATE_BUFFER_SIZE):
-            stateBuffer.append(np.zeros(shape=INPUT_SIZE))
+            stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:2],1]))
 
         terminal = False
         state = env.reset()
