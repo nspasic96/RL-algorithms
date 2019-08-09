@@ -19,8 +19,9 @@ EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.01
 EXPLORATION_DECAY = 0.995
 
-INPUT_SIZE = [210,160,3]
+INPUT_SIZE = [84,84,1]
 NUMBER_OF_ACTIONS = 6
+STATE_BUFFER_SIZE = 4
 
 def get_batch_from_memory(idxs, memory, target_network):
 
@@ -84,8 +85,12 @@ class DQNSolver:
         else:
             return np.argmax(self.predict(state))
 
-    
-
+def processState(state, stateBuffer):
+    state = transformState(state)
+    stateBuffer.append(state)
+    state = stateWithHistory(stateBuffer)
+    return state
+        
 def spaceInvaders(episodes = 1000):
     env = gym.make(ENV_NAME)
 
@@ -98,8 +103,15 @@ def spaceInvaders(episodes = 1000):
     epsilon = EXPLORATION_MAX
 
     for e in range(episodes):
+        stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
+        for _ in range(STATE_BUFFER_SIZE):
+            stateBuffer.append(np.zeros(shape=INPUT_SIZE))
+
         terminal = False
-        state = np.expand_dims(env.reset(),0)
+        state = env.reset()
+
+        state = processState(state, stateBuffer)
+
         cumulative_reward = 0
 
         step = 0
@@ -108,7 +120,8 @@ def spaceInvaders(episodes = 1000):
             #env.render()
             action = q_network.next_move(state, epsilon)
             state_next, reward, terminal, _ = env.step(action)
-            state_next = np.expand_dims(state_next, 0)
+
+            state_next = processState(state_next, stateBuffer)
             memory.append((state, action, reward, state_next))
 
             if(len(memory) >= BATCH_SIZE):
