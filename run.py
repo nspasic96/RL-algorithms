@@ -18,6 +18,7 @@ APPLY_STEPS = 50
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.01
 EXPLORATION_DECAY = 0.995
+SAVE_STEPS = 2000
 
 INPUT_SIZE = [84,84,4]
 NUMBER_OF_ACTIONS = 6
@@ -92,6 +93,9 @@ class DQNSolver:
         else:
             return np.argmax(self.predict(state))
 
+    def save_weights(self, step):
+        model.save_weights('model_weights_{}.h5'.format(step))
+
 def processState(state, stateBuffer):
     state = transformState(state)
     stateBuffer.append(state)
@@ -109,6 +113,7 @@ def spaceInvaders(episodes = 1000):
     
     epsilon = EXPLORATION_MAX
 
+    step = 0
     for e in range(episodes):
         stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
         for _ in range(STATE_BUFFER_SIZE):
@@ -121,7 +126,6 @@ def spaceInvaders(episodes = 1000):
 
         cumulative_reward = 0
 
-        step = 0
         while(not terminal):
             step += 1
             #env.render()
@@ -144,6 +148,9 @@ def spaceInvaders(episodes = 1000):
 
             epsilon *= EXPLORATION_DECAY
             epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
+
+            if step % SAVE_STEPS == 0:
+                q_network.save_weights(step)
         
         print("Episode {} over, total reward is {} and exploration rate is now {}".format(e, cumulative_reward, epsilon))
 
