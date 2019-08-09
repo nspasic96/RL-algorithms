@@ -157,14 +157,20 @@ def spaceInvaders(episodes = 1000):
     gameScores = []
     goodGameScores = []
 
-    s = tf.placeholder(dtype = tf.float32)
-    gameScoreMean = tf.reduce_mean(s)
-
-    tf.reset_default_graph()
+    #Tensorflow initializations
     init = tf.global_variables_initializer()
-    sess = tf.Session()
-    sess.run(init)
-    mean_summary = tf.summary.scalar(tensor = s, name = "mean")
+    s = tf.placeholder(dtype = tf.float32)
+    rew = tf.placeholder(dtype = tf.float32)
+    gameScoreMean = tf.reduce_mean(s)
+    mean_summary = tf.summary.scalar(tensor = gameScoreMean, name = "mean")
+    res_summary = tf.summary.scalar(tensor = rew, name = "rew")
+    
+    summaries = tf.summary.merge_all()
+
+
+    with tf.Session() as sess:
+        sess.run(init)
+        writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
 
     print("Action meanings : {}".format(env.get_action_meanings()))
 
@@ -217,9 +223,10 @@ def spaceInvaders(episodes = 1000):
         if(cumulative_reward > GOOD_GAME_TH):
             goodGameScores.append(cumulative_reward)
         gameScores.append(cumulative_reward)
-
-        summary = sess.run(mean_summary)
-        writer.add_summary(summary, e)
+        with tf.Session() as sess:
+            summary = sess.run(summaries, feed_dict={s : gameScores, rew : cumulative_reward})
+            writer.add_summary(summary, e)
+            
 
         #sess.run(gameScoreMean, feed_dict={s : gameScores})
         
