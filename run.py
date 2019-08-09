@@ -20,7 +20,7 @@ EXPLORATION_MIN = 0.01
 EXPLORATION_DECAY = 0.995
 
 INPUT_SIZE = [210,160,3]
-NUMBER_OF_ACTIONS = 3
+NUMBER_OF_ACTIONS = 6
 
 def get_batch_from_memory(idxs, memory, target_network):
 
@@ -38,7 +38,7 @@ def get_batch_from_memory(idxs, memory, target_network):
     states = np.reshape(states, [-1, *INPUT_SIZE])
 
     targets = np.array(targets)
-    targets = np.reshape(targets, [-1, 3])
+    targets = np.reshape(targets, [-1, NUMBER_OF_ACTIONS])
 
     return states, targets
 
@@ -86,9 +86,12 @@ class DQNSolver:
 def spaceInvaders(episodes = 1000):
     env = gym.make(ENV_NAME)
 
+    print("Action meanings : {}".format(env.get_action_meanings()))
+
     q_network = DQNSolver() #sa najsvezijim tezinama
     target_network = DQNSolver()#sa poslednjim zamrznutim tezinama
     memory = deque(maxlen = MEMORY_SIZE)
+
 
     for e in range(episodes):
         terminal = False
