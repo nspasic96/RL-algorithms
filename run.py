@@ -5,6 +5,10 @@ from collections import deque
 from keras.models import Sequential
 from keras.layers import Input, Conv2D, Dense, Flatten, Activation, BatchNormalization
 from keras.optimizers import Adam
+from skimage.io import imshow
+from skimage.color import rgb2grey
+from skimage.transform import resize
+from skimage.viewer import ImageViewer
 
 ENV_NAME = "SpaceInvaders-v0"
 
@@ -12,7 +16,11 @@ GAMMA = 0.95
 LEARNING_RATE = 0.001
 
 MEMORY_SIZE = 1000000
+<<<<<<< Updated upstream
 BATCH_SIZE = 64
+=======
+BATCH_SIZE = 20
+>>>>>>> Stashed changes
 APPLY_STEPS = 50
 
 EXPLORATION_MAX = 1.0
@@ -20,9 +28,9 @@ EXPLORATION_MIN = 0.01
 EXPLORATION_DECAY = 0.995
 SAVE_STEPS = 2000
 
-INPUT_SIZE = [84,84,4]
-NUMBER_OF_ACTIONS = 6
 STATE_BUFFER_SIZE = 4
+INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
+NUMBER_OF_ACTIONS = 6
 
 def get_batch_from_memory(idxs, memory, target_network):
 
@@ -31,7 +39,7 @@ def get_batch_from_memory(idxs, memory, target_network):
     for idx in idxs:
         state, action, reward, state_next = memory[idx]
         states.append(state)
-        outputs = target_network.predict(state_next)
+        outputs = target_network.predict(np.expand_dims(state_next,0))
         onehot = np.zeros(shape=(NUMBER_OF_ACTIONS,1))
         onehot[action, 0] = 1
         targets.append(reward + GAMMA*np.amax(outputs)*onehot)
@@ -101,7 +109,26 @@ def processState(state, stateBuffer):
     stateBuffer.append(state)
     state = stateWithHistory(stateBuffer)
     return state
-        
+
+def transformState(state):
+    shapeToResize = [110, 84]
+    grey = rgb2grey(state)
+    greyResized = resize(grey, shapeToResize)
+    #offset = (shapeToResize[0] - shapeToResize[1]) // 2
+    offset = [12,8]
+    cropped = greyResized[offset[0]:-offset[1],:]
+    final = np.expand_dims(cropped,2)
+    
+    #viewer = ImageViewer(final[:,:,0])
+    #viewer.show()
+    return final
+
+def stateWithHistory(stateBuffer):
+    concList = [stateBuffer[i] for i in range(STATE_BUFFER_SIZE-1,-1,-1)]
+    print("concList shape is {}".format(len(concList)))
+    return np.concatenate(concList, axis = 2)
+
+
 def spaceInvaders(episodes = 1000):
     env = gym.make(ENV_NAME)
 
@@ -128,7 +155,8 @@ def spaceInvaders(episodes = 1000):
 
         while(not terminal):
             step += 1
-            #env.render()
+            print("Step = {}\n".format(step))
+            env.render()
             action = q_network.next_move(state, epsilon)
             state_next, reward, terminal, _ = env.step(action)
 
