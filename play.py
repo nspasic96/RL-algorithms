@@ -3,7 +3,7 @@ import gym
 from collections import deque
 import numpy as np
 
-weights_path = r"C:\SpaceInvadors\unknown\batch_size=32_apply_steps=100_state_bufS=4model_weights_10000.h5"
+weights_path = r"C:\SpaceInvadors\batch_size=64_apply_steps=10000_state_bufS=4_batch_norm_False\model_weights_16000.h5"
 number_of_games = 100
 
 

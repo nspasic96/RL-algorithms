@@ -18,11 +18,11 @@ GAMMA = 0.95
 LEARNING_RATE = 0.001
 
 MEMORY_SIZE = 1000000
-BATCH_SIZE = 31
-APPLY_STEPS = 49
+BATCH_SIZE = 128
+APPLY_STEPS = 10000
 
 EXPLORATION_MAX = 1.0
-EXPLORATION_MIN = 0.01
+EXPLORATION_MIN = 0.1
 EXPLORATION_DECAY = 0.995
 SAVE_STEPS = 2000
 
@@ -47,7 +47,7 @@ def writeParams(path):
         f.write("INPUT_SIZE : {}\n".format(INPUT_SIZE))
         f.write("BATCH_NORM : {}\n".format(BATCH_NORM))
 
-path = "./batch_size={}_apply_steps={}_state_bufS={}".format(BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE)
+path = "./batch_size={}_apply_steps={}_state_bufS={}_batch_norm_{}".format(BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE, BATCH_NORM)
 if not os.path.exists(path):
     print("Creating folder")
     os.mkdir(path)
@@ -195,8 +195,7 @@ def spaceInvaders(episodes = 1000):
 
         while(not terminal):
             step += 1
-            #print("Step = {}\n".format(step))
-            env.render()
+            #env.render()
             action = q_network.next_move(state, epsilon)
             state_next, reward, terminal, _ = env.step(action)
 
@@ -216,13 +215,16 @@ def spaceInvaders(episodes = 1000):
 
             epsilon *= EXPLORATION_DECAY
             epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
-
+            
             if step % SAVE_STEPS == 0:
                 print("{}. steps done in episode {}, saving work...".format(step,e))
                 q_network.save_weights(step)
+
         if(cumulative_reward > GOOD_GAME_TH):
             goodGameScores.append(cumulative_reward)
         gameScores.append(cumulative_reward)
+
+
         with tf.Session() as sess:
             summary = sess.run(summaries, feed_dict={s : gameScores, rew : cumulative_reward})
             writer.add_summary(summary, e)
@@ -230,7 +232,7 @@ def spaceInvaders(episodes = 1000):
 
         #sess.run(gameScoreMean, feed_dict={s : gameScores})
         
-        print("Episode {} over, total reward is {} and exploration rate is now {}. \n Mean score is {}, and filtered mean score is {}(total {} games count)".format(e, 
+        print("Episode {} over(total {} steps until now), total reward is {} and exploration rate is now {}. \n Mean score is {}, and filtered mean score is {}(total {} games count)".format(e,step, 
             cumulative_reward, epsilon, np.mean(gameScores), np.mean(goodGameScores), len(goodGameScores)))
 
 if __name__ == "__main__":

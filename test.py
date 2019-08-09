@@ -20,13 +20,15 @@ model1 = create_network()
 model2 = create_network()
 
 randInp = np.random.rand(1,50)
-out1 = model1.predict(randInp)
-out2 = model2.predict(randInp)
+gt1 = model1.predict(randInp)
+gt2 = model2.predict(randInp)
 
 model2.set_weights(model1.get_weights())
-out3 = model2.predict(randInp)
-print(out1)
-print(out2)
-print(out3)
+v1 = model2.predict(randInp)
+model2.fit(randInp, np.random.rand(1,3))
+v2 = model1.predict(randInp)
+v3 = model2.predict(randInp)
+
+print("Should be v1==gt1==v2!=v3\n gt1={}\n gt2={}\n v1={} \n v2={}\n v3={}".format(gt1,gt2,v1,v2,v3))
 
 
