@@ -31,7 +31,7 @@ def get_batch_from_memory(idxs, memory, target_network):
         states.append(state)
         outputs = target_network.predict(state_next)
         onehot = np.zeros(shape=(NUMBER_OF_ACTIONS,1))
-        onehot[action-1, 0] = 1
+        onehot[action, 0] = 1
         targets.append(reward + GAMMA*np.amax(outputs)*onehot)
 
     states = np.array(states)
@@ -79,7 +79,7 @@ class DQNSolver:
         return self.model.predict(states)
 
     def next_move(self, state):
-        return np.argmax(self.predict(state) + 1)
+        return np.argmax(self.predict(state))
 
     
 
