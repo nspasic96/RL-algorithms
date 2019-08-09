@@ -16,11 +16,7 @@ GAMMA = 0.95
 LEARNING_RATE = 0.001
 
 MEMORY_SIZE = 1000000
-<<<<<<< Updated upstream
 BATCH_SIZE = 64
-=======
-BATCH_SIZE = 20
->>>>>>> Stashed changes
 APPLY_STEPS = 50
 
 EXPLORATION_MAX = 1.0
