@@ -3,7 +3,7 @@ import gym
 from collections import deque
 import numpy as np
 
-weights_path = r"C:\SpaceInvadors\batch_size=32_apply_steps=10000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_98000.h5"
+weights_path = r"C:\SpaceInvadors\env_SpaceInvaders-v0_pg_batch_size=32_apply_steps=11000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_184_max_685.0.h5"
 number_of_games = 100
 
 
@@ -14,7 +14,7 @@ def spaceInvadersPlay(episodes):
     print("PLAyiininininninninining")
     env = gym.make(ENV_NAME)
     
-    for e in range(episodes):
+    while True:
         stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
         for _ in range(STATE_BUFFER_SIZE):
             stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:2],1]))

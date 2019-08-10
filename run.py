@@ -25,7 +25,7 @@ APPLY_STEPS = 11000
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.1
-EXPLORATION_DECAY = 0.99999
+EXPLORATION_DECAY = 0.999998
 SAVE_STEPS = 11000
 
 STATE_BUFFER_SIZE = 4
@@ -192,9 +192,11 @@ def spaceInvaders(episodes = 1000):
     epsilon = EXPLORATION_MAX
     
     curr_maxx = -1000
+    e=0
     with tf.Session() as sess:
         step = 0
-        for e in range(episodes):
+        while True:
+            e+=1
             stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
             for _ in range(STATE_BUFFER_SIZE):
                 stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:2],1]))
@@ -261,9 +263,9 @@ def spaceInvaders(episodes = 1000):
 
 if __name__ == "__main__":
 
-    path = "./env_{}_batch_size={}_apply_steps={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(ENV_NAME,BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
+    path = "./env_{}_dqn_batch_size={}_apply_steps={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(ENV_NAME,BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
     if not os.path.exists(path):
         print("Creating folder")
         os.mkdir(path)
     writeParams(path + "/params.txt")
-    spaceInvaders(1000)
+    spaceInvaders(1000000)
