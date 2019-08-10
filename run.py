@@ -51,13 +51,7 @@ def writeParams(path):
         f.write("INPUT_SIZE : {}\n".format(INPUT_SIZE))
         f.write("BATCH_NORM : {}\n".format(BATCH_NORM))
 
-path = "./batch_size={}_apply_steps={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
-if not os.path.exists(path):
-    print("Creating folder")
-    os.mkdir(path)
-writeParams(path + "/params.txt")
-
-def get_batch_from_memory(idxs, memory, target_network, q_network):
+def get_batch_from_memory(idxs, memory, target_network):
 
     states=[]
     targets =[]
@@ -267,7 +261,10 @@ def spaceInvaders(episodes = 1000):
                 elapsed, cumulative_reward, epsilon, np.mean(gameScores), np.mean(goodGameScores), len(goodGameScores)))
 
 if __name__ == "__main__":
-    
-    with tf.device('/cpu:0'):  
- 
-        spaceInvaders(1000)
+
+    path = "./batch_size={}_apply_steps={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
+    if not os.path.exists(path):
+        print("Creating folder")
+        os.mkdir(path)
+    writeParams(path + "/params.txt")
+    spaceInvaders(1000)
