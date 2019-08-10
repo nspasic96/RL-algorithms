@@ -26,7 +26,7 @@ APPLY_STEPS = 11000
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.1
-EXPLORATION_DECAY = 0.99999
+EXPLORATION_DECAY = 0.999998
 SAVE_STEPS = 11000
 
 STATE_BUFFER_SIZE = 4
@@ -205,9 +205,11 @@ def spaceInvaders(episodes = 1000):
     epsilon = EXPLORATION_MAX
     
     curr_maxx = -1000
+    e=0
     with tf.Session() as sess:
         step = 0
-        for e in range(episodes):
+        while True:
+            e+=1
 
             rewards = []
             actions = []
