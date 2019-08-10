@@ -204,7 +204,7 @@ def spaceInvaders(episodes = 1000):
     
     epsilon = EXPLORATION_MAX
     
-    curr_maxx = 0
+    curr_maxx = -1000
     with tf.Session() as sess:
         step = 0
         for e in range(episodes):
@@ -228,7 +228,7 @@ def spaceInvaders(episodes = 1000):
             start = time.time()
             while(not terminal):
                 step += 1
-                env.render()
+                #env.render()
                 action = pgs.next_move(state, epsilon)
                 state_next, reward, terminal, _ = env.step(action)
                 rewards.append(reward)

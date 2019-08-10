@@ -191,7 +191,7 @@ def spaceInvaders(episodes = 1000):
     
     epsilon = EXPLORATION_MAX
     
-    curr_maxx = 0
+    curr_maxx = -1000
     with tf.Session() as sess:
         step = 0
         for e in range(episodes):
