@@ -12,6 +12,7 @@ from skimage.viewer import ImageViewer
 import os
 import tensorflow as tf
 import time 
+from keras.models import load_model, Model, clone_model
 
 ENV_NAME = "SpaceInvaders-v0"
 
@@ -24,7 +25,7 @@ APPLY_STEPS = 11000
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.1
-EXPLORATION_DECAY = 0.99999
+EXPLORATION_DECAY = 0.9999
 SAVE_STEPS = 11000
 
 STATE_BUFFER_SIZE = 4
@@ -63,8 +64,11 @@ def get_batch_from_memory(idxs, memory, target_network, q_network):
     for idx in idxs:
 
         state, action, reward, state_next, done = memory[idx]
+        #print(state_next.shape)
+        #print((1-done)*4)
         outputs = target_network.predict(np.expand_dims(state_next,0))
         states.append(state)
+
         target = reward + (1-done)*GAMMA*np.amax(outputs)
 
         target_f = q_network.predict(np.expand_dims(state,0))
@@ -132,6 +136,9 @@ class DQNSolver:
         self.model.load_weights(path)
     def save_weights(self, step):
         self.model.save_weights(path + '/model_weights_{}.h5'.format(step))
+    def save_weights_for_max(self, e,curr_maxx):
+        self.model.save_weights(path + '/model_weights_{}_max_{}.h5'.format(e, curr_maxx))
+
 
 def processState(state, stateBuffer):
     state = transformState(state)
@@ -174,23 +181,24 @@ def spaceInvaders(episodes = 1000):
     
     summaries = tf.summary.merge_all()
 
+    q_network = DQNSolver() #sa najsvezijim tezinama
+    target_network = DQNSolver()#sa poslednjim zamrznutim tezinama
 
     with tf.Session() as sess:
         sess.run(init)
         writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
 
     print("Action meanings : {}".format(env.get_action_meanings()))
-
-    q_network = DQNSolver() #sa najsvezijim tezinama
-    target_network = DQNSolver()#sa poslednjim zamrznutim tezinama
     if LOAD_PRETRAINED is not None:
-        q_network.load_weights(LOAD_PRETRAINED)
-        target_network._set_weights(q_network._get_weights())
-        #target_network.load_weights(LOAD_PRETRAINED)
+        q_network.model = load_model(LOAD_PRETRAINED)
+        q_network.model.build()
+        target_network.model = model_clone(q_network.model)
+        target_network.build()
     memory = deque(maxlen = MEMORY_SIZE)
     
     epsilon = EXPLORATION_MAX
     
+    curr_maxx = 0
     with tf.Session() as sess:
         step = 0
         for e in range(episodes):
@@ -204,6 +212,8 @@ def spaceInvaders(episodes = 1000):
             state = processState(state, stateBuffer)
 
             cumulative_reward = 0
+            max_reached = 0
+
             start = time.time()
             while(not terminal):
                 step += 1
@@ -219,7 +229,7 @@ def spaceInvaders(episodes = 1000):
                     states, targets = get_batch_from_memory(idxs, memory, target_network, q_network)
                     q_network.fit(states, targets, epochs = 1)
 
-                    if step % APPLY_STEPS == 0:
+                    if step % APPLY_STEPS == 0 or step==1:
                         target_network._set_weights(q_network._get_weights())
 
                 cumulative_reward += reward
@@ -239,6 +249,14 @@ def spaceInvaders(episodes = 1000):
                 goodGameScores.append(cumulative_reward)
             gameScores.append(cumulative_reward)
 
+            if(cumulative_reward > curr_maxx):
+                curr_maxx = cumulative_reward
+                max_reached += 1
+                st = time.time()
+                q_network.save_weights_for_max(e,curr_maxx)
+                el = time.time() - st
+                print("New max({}) reached! Weights saved in {}s".format(curr_maxx, el))
+
             summary = sess.run(summaries, feed_dict={s : gameScores, rew : cumulative_reward})
             writer.add_summary(summary, e)
                 
@@ -249,4 +267,7 @@ def spaceInvaders(episodes = 1000):
                 elapsed, cumulative_reward, epsilon, np.mean(gameScores), np.mean(goodGameScores), len(goodGameScores)))
 
 if __name__ == "__main__":
-    spaceInvaders(1000)
+    
+    with tf.device('/cpu:0'):  
+ 
+        spaceInvaders(1000)
