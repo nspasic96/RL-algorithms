@@ -25,7 +25,7 @@ APPLY_STEPS = 11000
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.1
-EXPLORATION_DECAY = 0.9999
+EXPLORATION_DECAY = 0.99999
 SAVE_STEPS = 11000
 
 STATE_BUFFER_SIZE = 4
@@ -184,10 +184,9 @@ def spaceInvaders(episodes = 1000):
 
     print("Action meanings : {}".format(env.get_action_meanings()))
     if LOAD_PRETRAINED is not None:
-        q_network.model = load_model(LOAD_PRETRAINED)
-        q_network.model.build()
-        target_network.model = model_clone(q_network.model)
-        target_network.build()
+        q_network.load_weights(LOAD_PRETRAINED)        
+        target_network._set_weights(q_network._get_weights())
+
     memory = deque(maxlen = MEMORY_SIZE)
     
     epsilon = EXPLORATION_MAX
@@ -262,7 +261,7 @@ def spaceInvaders(episodes = 1000):
 
 if __name__ == "__main__":
 
-    path = "./batch_size={}_apply_steps={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
+    path = "./env_{}_batch_size={}_apply_steps={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(ENV_NAME,BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
     if not os.path.exists(path):
         print("Creating folder")
         os.mkdir(path)

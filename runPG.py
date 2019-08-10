@@ -279,7 +279,7 @@ def spaceInvaders(episodes = 1000):
 
 if __name__ == "__main__":
 
-    path = "./pg_batch_size={}_apply_steps={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
+    path = "./env_{}_pg_batch_size={}_apply_steps={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(ENV_NAME,BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
     if not os.path.exists(path):
         print("Creating folder")
         os.mkdir(path)
