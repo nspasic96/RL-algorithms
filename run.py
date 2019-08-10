@@ -33,8 +33,8 @@ INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
 NUMBER_OF_ACTIONS = 6
 GOOD_GAME_TH = 100
 BATCH_NORM = False
-LOAD_PRETRAINED = None
-#LOAD_PRETRAINED = r"C:\SpaceInvadors\batch_size=32_apply_steps=10000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_102000.h5"
+#LOAD_PRETRAINED = None
+LOAD_PRETRAINED = r"/home/nspasic96/Projects/Python3/SpaceInvaders/batch_size=32_apply_steps=10000_state_bufS=4_batch_norm_False_numberAc_6/model_weights_98000.h5"
 
 def writeParams(path):
     with open(path, "a") as f:
@@ -82,12 +82,12 @@ def get_batch_from_memory(idxs, memory, target_network, q_network):
 class DQNSolver:
     def __init__(self):
         #input to network will be (None, 90,84,4)
-        conv1 = Conv2D(16,8, strides = (4,4), activation = Activation("relu"))
+        conv1 = Conv2D(16,8, strides = (4,4), activation = "relu")
         bn1 = BatchNormalization()
-        conv2 = Conv2D(32,4, strides = (2,2), activation = Activation("relu"))
+        conv2 = Conv2D(32,4, strides = (2,2), activation = "relu")
         bn2 = BatchNormalization()
         flat_feature = Flatten()
-        fc1 = Dense(256, activation = Activation('relu'))
+        fc1 = Dense(256, activation = 'relu')
         bn3 = BatchNormalization()
         outputs = Dense(NUMBER_OF_ACTIONS)
 
@@ -182,6 +182,7 @@ def spaceInvaders(episodes = 1000):
         sess.run(init)
         writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
 
+<<<<<<< Updated upstream
     print("Action meanings : {}".format(env.get_action_meanings()))
     if LOAD_PRETRAINED is not None:
         q_network.load_weights(LOAD_PRETRAINED)        
@@ -197,6 +198,28 @@ def spaceInvaders(episodes = 1000):
         step = 0
         while True:
             e+=1
+=======
+        print("Action meanings : {}".format(env.get_action_meanings()))
+        step = 0
+
+        if LOAD_PRETRAINED is not None:
+            q_network.model.load_weights(LOAD_PRETRAINED) 
+            target_network.model.load_weights(LOAD_PRETRAINED) 
+            print(" \n\n\nLOADING FINISHED \n\n\n")   
+            """   
+            target_network.model = clone_model(q_network.model)
+            target_network.model.compile(optimizer = Adam(LEARNING_RATE), loss ="mse")
+            #target_network.model.build()
+            target_network._set_weights(q_network._get_weights())
+            """
+
+        memory = deque(maxlen = MEMORY_SIZE)
+        
+        epsilon = EXPLORATION_MAX
+        
+        curr_maxx = -1000
+        for e in range(episodes):
+>>>>>>> Stashed changes
             stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
             for _ in range(STATE_BUFFER_SIZE):
                 stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:2],1]))
