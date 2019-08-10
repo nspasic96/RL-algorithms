@@ -11,6 +11,7 @@ from skimage.transform import resize
 from skimage.viewer import ImageViewer
 import os
 import tensorflow as tf
+import time 
 
 ENV_NAME = "SpaceInvaders-v0"
 
@@ -18,19 +19,21 @@ GAMMA = 0.95
 LEARNING_RATE = 0.001
 
 MEMORY_SIZE = 1000000
-BATCH_SIZE = 128
-APPLY_STEPS = 10000
+BATCH_SIZE = 32 #33 je pong
+APPLY_STEPS = 11000
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.1
-EXPLORATION_DECAY = 0.995
-SAVE_STEPS = 2000
+EXPLORATION_DECAY = 0.99999
+SAVE_STEPS = 11000
 
 STATE_BUFFER_SIZE = 4
 INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
-NUMBER_OF_ACTIONS = 4
+NUMBER_OF_ACTIONS = 6
 GOOD_GAME_TH = 100
 BATCH_NORM = False
+LOAD_PRETRAINED = None
+#LOAD_PRETRAINED = r"C:\SpaceInvadors\batch_size=32_apply_steps=10000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_102000.h5"
 
 def writeParams(path):
     with open(path, "a") as f:
@@ -53,17 +56,21 @@ if not os.path.exists(path):
     os.mkdir(path)
 writeParams(path + "/params.txt")
 
-def get_batch_from_memory(idxs, memory, target_network):
+def get_batch_from_memory(idxs, memory, target_network, q_network):
 
     states=[]
     targets =[]
     for idx in idxs:
-        state, action, reward, state_next = memory[idx]
-        states.append(state)
+
+        state, action, reward, state_next, done = memory[idx]
         outputs = target_network.predict(np.expand_dims(state_next,0))
-        onehot = np.zeros(shape=(NUMBER_OF_ACTIONS,1))
-        onehot[action, 0] = 1
-        targets.append(reward + GAMMA*np.amax(outputs)*onehot)
+        states.append(state)
+        target = reward + (1-done)*GAMMA*np.amax(outputs)
+
+        target_f = q_network.predict(np.expand_dims(state,0))
+        target_f[0][action] = target
+
+        targets.append(target_f)
 
     states = np.array(states)
     states = np.reshape(states, [-1, *INPUT_SIZE])
@@ -176,64 +183,70 @@ def spaceInvaders(episodes = 1000):
 
     q_network = DQNSolver() #sa najsvezijim tezinama
     target_network = DQNSolver()#sa poslednjim zamrznutim tezinama
+    if LOAD_PRETRAINED is not None:
+        q_network.load_weights(LOAD_PRETRAINED)
+        target_network._set_weights(q_network._get_weights())
+        #target_network.load_weights(LOAD_PRETRAINED)
     memory = deque(maxlen = MEMORY_SIZE)
     
     epsilon = EXPLORATION_MAX
+    
+    with tf.Session() as sess:
+        step = 0
+        for e in range(episodes):
+            stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
+            for _ in range(STATE_BUFFER_SIZE):
+                stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:2],1]))
 
-    step = 0
-    for e in range(episodes):
-        stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
-        for _ in range(STATE_BUFFER_SIZE):
-            stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:2],1]))
+            terminal = False
+            state = env.reset()
 
-        terminal = False
-        state = env.reset()
+            state = processState(state, stateBuffer)
 
-        state = processState(state, stateBuffer)
+            cumulative_reward = 0
+            start = time.time()
+            while(not terminal):
+                step += 1
+                #env.render()
+                action = q_network.next_move(state, epsilon)
+                state_next, reward, terminal, _ = env.step(action)
 
-        cumulative_reward = 0
+                state_next = processState(state_next, stateBuffer)
+                memory.append((state, action, reward, state_next, terminal))
 
-        while(not terminal):
-            step += 1
-            #env.render()
-            action = q_network.next_move(state, epsilon)
-            state_next, reward, terminal, _ = env.step(action)
+                if(len(memory) >= BATCH_SIZE):
+                    idxs = np.random.choice(len(memory), BATCH_SIZE, replace=False)
+                    states, targets = get_batch_from_memory(idxs, memory, target_network, q_network)
+                    q_network.fit(states, targets, epochs = 1)
 
-            state_next = processState(state_next, stateBuffer)
-            memory.append((state, action, reward, state_next))
+                    if step % APPLY_STEPS == 0:
+                        target_network._set_weights(q_network._get_weights())
 
-            if(len(memory) >= BATCH_SIZE):
-                idxs = np.random.choice(len(memory), BATCH_SIZE, replace=False)
-                states, targets = get_batch_from_memory(idxs, memory, target_network)
-                q_network.fit(states, targets, epochs = 1)
+                cumulative_reward += reward
+                state = state_next
 
-                if step % APPLY_STEPS == 0:
-                    target_network._set_weights(q_network._get_weights())
+                epsilon *= EXPLORATION_DECAY
+                epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
+                
+                if step % SAVE_STEPS == 0:
+                    st = time.time()
+                    q_network.save_weights(step)
+                    el = time.time() - st
+                    print("{}. steps done in episode {}, work saved in {}s".format(step,e,el))
 
-            cumulative_reward += reward
-            state = state_next
+            elapsed = time.time() - start
+            if(cumulative_reward > GOOD_GAME_TH):
+                goodGameScores.append(cumulative_reward)
+            gameScores.append(cumulative_reward)
 
-            epsilon *= EXPLORATION_DECAY
-            epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
-            
-            if step % SAVE_STEPS == 0:
-                print("{}. steps done in episode {}, saving work...".format(step,e))
-                q_network.save_weights(step)
-
-        if(cumulative_reward > GOOD_GAME_TH):
-            goodGameScores.append(cumulative_reward)
-        gameScores.append(cumulative_reward)
-
-
-        with tf.Session() as sess:
             summary = sess.run(summaries, feed_dict={s : gameScores, rew : cumulative_reward})
             writer.add_summary(summary, e)
-            
+                
 
-        #sess.run(gameScoreMean, feed_dict={s : gameScores})
-        
-        print("Episode {} over(total {} steps until now), total reward is {} and exploration rate is now {}. \n Mean score is {}, and filtered mean score is {}(total {} games count)".format(e,step, 
-            cumulative_reward, epsilon, np.mean(gameScores), np.mean(goodGameScores), len(goodGameScores)))
+            #sess.run(gameScoreMean, feed_dict={s : gameScores})
+            
+            print("Episode {} over(total {} steps until now) in {}s, total reward is {} and exploration rate is now {}. \n Mean score is {}, and filtered mean score is {}(total {} games count)".format(e,step, 
+                elapsed, cumulative_reward, epsilon, np.mean(gameScores), np.mean(goodGameScores), len(goodGameScores)))
 
 if __name__ == "__main__":
     spaceInvaders(1000)
