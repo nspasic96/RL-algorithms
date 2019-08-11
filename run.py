@@ -25,7 +25,7 @@ APPLY_STEPS = 11000
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.1
-EXPLORATION_DECAY = 0.999998
+STEPS_TO_DECREASE = 1000000
 SAVE_STEPS = 11000
 
 STATE_BUFFER_SIZE = 4
@@ -33,8 +33,11 @@ INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
 NUMBER_OF_ACTIONS = 6
 GOOD_GAME_TH = 100
 BATCH_NORM = False
-#LOAD_PRETRAINED = None
-LOAD_PRETRAINED = r"/home/nspasic96/Projects/Python3/SpaceInvaders/batch_size=32_apply_steps=10000_state_bufS=4_batch_norm_False_numberAc_6/model_weights_98000.h5"
+LOAD_PRETRAINED = None
+#LOAD_PRETRAINED = r"/home/nspasic96/Projects/Python3/SpaceInvaders/batch_size=32_apply_steps=10000_state_bufS=4_batch_norm_False_numberAc_6/model_weights_98000.h5"
+
+def newExploration(minn,maxx,step):
+    return maxx + step*(minn-maxx)/STEPS_TO_DECREASE
 
 def writeParams(path):
     with open(path, "a") as f:
@@ -45,7 +48,7 @@ def writeParams(path):
         f.write("APPLY_STEPS : {}\n".format(APPLY_STEPS))
         f.write("EXPLORATION_MAX : {}\n".format(EXPLORATION_MAX))
         f.write("EXPLORATION_MIN : {}\n".format(EXPLORATION_MIN))
-        f.write("EXPLORATION_DECAY : {}\n".format(EXPLORATION_DECAY))
+        f.write("STEPS_TO_DECREASE : {}\n".format(STEPS_TO_DECREASE))
         f.write("SAVE_STEPS : {}\n".format(SAVE_STEPS))
         f.write("STATE_BUFFER_SIZE : {}\n".format(STATE_BUFFER_SIZE))
         f.write("INPUT_SIZE : {}\n".format(INPUT_SIZE))
@@ -159,7 +162,7 @@ def stateWithHistory(stateBuffer):
     return np.concatenate(concList, axis = 2)
 
 
-def spaceInvaders(episodes = 1000):
+def spaceInvaders():
     print("Trainininininng")
     env = gym.make(ENV_NAME)
     gameScores = []
@@ -182,7 +185,6 @@ def spaceInvaders(episodes = 1000):
         sess.run(init)
         writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
 
-<<<<<<< Updated upstream
     print("Action meanings : {}".format(env.get_action_meanings()))
     if LOAD_PRETRAINED is not None:
         q_network.load_weights(LOAD_PRETRAINED)        
@@ -198,28 +200,6 @@ def spaceInvaders(episodes = 1000):
         step = 0
         while True:
             e+=1
-=======
-        print("Action meanings : {}".format(env.get_action_meanings()))
-        step = 0
-
-        if LOAD_PRETRAINED is not None:
-            q_network.model.load_weights(LOAD_PRETRAINED) 
-            target_network.model.load_weights(LOAD_PRETRAINED) 
-            print(" \n\n\nLOADING FINISHED \n\n\n")   
-            """   
-            target_network.model = clone_model(q_network.model)
-            target_network.model.compile(optimizer = Adam(LEARNING_RATE), loss ="mse")
-            #target_network.model.build()
-            target_network._set_weights(q_network._get_weights())
-            """
-
-        memory = deque(maxlen = MEMORY_SIZE)
-        
-        epsilon = EXPLORATION_MAX
-        
-        curr_maxx = -1000
-        for e in range(episodes):
->>>>>>> Stashed changes
             stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
             for _ in range(STATE_BUFFER_SIZE):
                 stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:2],1]))
@@ -253,14 +233,13 @@ def spaceInvaders(episodes = 1000):
                 cumulative_reward += reward
                 state = state_next
 
-                epsilon *= EXPLORATION_DECAY
+                epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,step)
                 epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
                 
                 if step % SAVE_STEPS == 0:
                     st = time.time()
                     q_network.save_weights(step)
                     el = time.time() - st
-                    print("{}. steps done in episode {}, work saved in {}s".format(step,e,el))
 
             elapsed = time.time() - start
             if(cumulative_reward > GOOD_GAME_TH):
@@ -277,10 +256,7 @@ def spaceInvaders(episodes = 1000):
 
             summary = sess.run(summaries, feed_dict={s : gameScores, rew : cumulative_reward})
             writer.add_summary(summary, e)
-                
-
-            #sess.run(gameScoreMean, feed_dict={s : gameScores})
-            
+                            
             print("Episode {} over(total {} steps until now) in {}s, total reward is {} and exploration rate is now {}. \n Mean score is {}, and filtered mean score is {}(total {} games count)".format(e,step, 
                 elapsed, cumulative_reward, epsilon, np.mean(gameScores), np.mean(goodGameScores), len(goodGameScores)))
 
@@ -291,4 +267,4 @@ if __name__ == "__main__":
         print("Creating folder")
         os.mkdir(path)
     writeParams(path + "/params.txt")
-    spaceInvaders(1000000)
+    spaceInvaders()

@@ -17,16 +17,17 @@ from keras.losses import categorical_crossentropy
 
 ENV_NAME = "SpaceInvaders-v0"
 
-GAMMA = 0.95
+GAMMA = 0.99
 LEARNING_RATE = 0.001
 
 MEMORY_SIZE = 1000000
-BATCH_SIZE = 32 #33 je pong
+BATCH_SIZE = 32
 APPLY_STEPS = 11000
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.1
-EXPLORATION_DECAY = 0.999998
+STEPS_TO_DECREASE = 1000000
+
 SAVE_STEPS = 11000
 
 STATE_BUFFER_SIZE = 4
@@ -37,6 +38,9 @@ BATCH_NORM = False
 LOAD_PRETRAINED = None
 #LOAD_PRETRAINED = r"C:\SpaceInvadors\batch_size=32_apply_steps=10000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_102000.h5"
 
+def newExploration(minn,maxx,step):
+    return maxx + step*(minn-maxx)/STEPS_TO_DECREASE
+
 def writeParams(path):
     with open(path, "a") as f:
         f.write("GAMMA : {}\n".format(GAMMA))
@@ -46,39 +50,11 @@ def writeParams(path):
         f.write("APPLY_STEPS : {}\n".format(APPLY_STEPS))
         f.write("EXPLORATION_MAX : {}\n".format(EXPLORATION_MAX))
         f.write("EXPLORATION_MIN : {}\n".format(EXPLORATION_MIN))
-        f.write("EXPLORATION_DECAY : {}\n".format(EXPLORATION_DECAY))
+        f.write("STEPS_TO_DECREASE : {}\n".format(STEPS_TO_DECREASE))
         f.write("SAVE_STEPS : {}\n".format(SAVE_STEPS))
         f.write("STATE_BUFFER_SIZE : {}\n".format(STATE_BUFFER_SIZE))
         f.write("INPUT_SIZE : {}\n".format(INPUT_SIZE))
         f.write("BATCH_NORM : {}\n".format(BATCH_NORM))
-
-def get_batch_from_memory(idxs, memory, target_network, q_network):
-
-    states=[]
-    targets =[]
-    for idx in idxs:
-
-        state, action, reward, state_next, done = memory[idx]
-        #print(state_next.shape)
-        #print((1-done)*4)
-        outputs = target_network.predict(np.expand_dims(state_next,0))
-        states.append(state)
-
-        target = reward + (1-done)*GAMMA*np.amax(outputs)
-
-        target_f = q_network.predict(np.expand_dims(state,0))
-        target_f[0][action] = target
-
-        targets.append(target_f)
-
-    states = np.array(states)
-    states = np.reshape(states, [-1, *INPUT_SIZE])
-
-    targets = np.array(targets)
-    targets = np.reshape(targets, [-1, NUMBER_OF_ACTIONS])
-
-    return states, targets
-
 
 class PGSolver:
     def __init__(self):
@@ -145,18 +121,16 @@ def transformState(state):
     shapeToResize = [110, 84]
     grey = rgb2grey(state)
     greyResized = resize(grey, shapeToResize)
-    #offset = (shapeToResize[0] - shapeToResize[1]) // 2
     offset = [12,8]
     cropped = greyResized[offset[0]:-offset[1],:]
     final = np.expand_dims(cropped,2)
 
     #viewer = ImageViewer(np.squeeze(final[:,:],2))
-    #viewer.show()    
+    #viewer.show() 
     return final
 
 def stateWithHistory(stateBuffer):
     concList = [stateBuffer[i] for i in range(STATE_BUFFER_SIZE-1,-1,-1)]
-    #print("concList shape is {}".format(len(concList)))
     return np.concatenate(concList, axis = 2)
 
 def discountAndNormalize(rewards):
@@ -180,7 +154,7 @@ def discountAndNormalize(rewards):
 
     return res
 
-def spaceInvaders(episodes = 1000):
+def spaceInvaders():
     print("Trainininininng")
     env = gym.make(ENV_NAME)
     gameScores = []
@@ -230,7 +204,7 @@ def spaceInvaders(episodes = 1000):
             start = time.time()
             while(not terminal):
                 step += 1
-                #env.render()
+                env.render()
                 action = pgs.next_move(state, epsilon)
                 state_next, reward, terminal, _ = env.step(action)
                 rewards.append(reward)
@@ -242,7 +216,8 @@ def spaceInvaders(episodes = 1000):
                 cumulative_reward += reward
                 state = state_next
 
-                epsilon *= EXPLORATION_DECAY
+                #epsilon *= EXPLORATION_DECAY
+                epsilon = newExploration(EXPLORATION_MIN, EXPLORATION_MAX, step)
                 epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
                 
                 if step % SAVE_STEPS == 0:
@@ -286,4 +261,4 @@ if __name__ == "__main__":
         print("Creating folder")
         os.mkdir(path)
     writeParams(path + "/params.txt")
-    spaceInvaders(1000)
+    spaceInvaders()
