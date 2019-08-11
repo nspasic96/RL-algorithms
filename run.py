@@ -4,7 +4,7 @@ import numpy as np
 from collections import deque
 from keras.models import Sequential
 from keras.layers import Input, Conv2D, Dense, Flatten, Activation, BatchNormalization
-from keras.optimizers import Adam
+from keras.optimizers import Adam, RMSprop
 from skimage.io import imshow
 from skimage.color import rgb2grey
 from skimage.transform import resize
@@ -17,7 +17,7 @@ from keras.models import load_model, Model, clone_model
 ENV_NAME = "SpaceInvaders-v0"
 
 GAMMA = 0.99
-LEARNING_RATE = 0.00001
+LEARNING_RATE = 0.00025
 
 MEMORY_SIZE = 1000
 BATCH_SIZE = 32
@@ -134,7 +134,7 @@ class DQNSolver:
             model.add(bn3)
         model.add(outputs)
 
-        model.compile(optimizer = Adam(LEARNING_RATE), loss ="mse")
+        model.compile(optimizer = RMSprop(LEARNING_RATE), loss ="mse")
         model.build([None, *INPUT_SIZE])
         print(model.summary())
         self.model = model
@@ -205,19 +205,8 @@ def spaceInvaders():
     
     summaries = tf.summary.merge_all()
 
-    q_network = DQNSolver() #sa najsvezijim tezinama
-    target_network = DQNSolver()#sa poslednjim zamrznutim tezinama
-    target_network._set_weights(q_network._get_weights())
-
-    with tf.Session() as sess:
-        sess.run(init)
-        writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
-
     print("Action meanings : {}".format(env.get_action_meanings()))
-    if LOAD_PRETRAINED is not None:
-        q_network.load_weights(LOAD_PRETRAINED)        
-        target_network._set_weights(q_network._get_weights())
-
+    
     memory = deque(maxlen = MEMORY_SIZE)
     
     epsilon = EXPLORATION_MAX
@@ -225,6 +214,18 @@ def spaceInvaders():
     curr_maxx = -1000
     e=0
     with tf.Session() as sess:
+        
+        sess.run(init)
+        writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
+
+        q_network = DQNSolver() #sa najsvezijim tezinama
+        target_network = DQNSolver()#sa poslednjim zamrznutim tezinama
+        target_network._set_weights(q_network._get_weights())
+        
+        if LOAD_PRETRAINED is not None:
+            q_network.load_weights(LOAD_PRETRAINED)        
+            target_network._set_weights(q_network._get_weights())
+
         step = 0
         while True:
             e+=1
@@ -255,7 +256,8 @@ def spaceInvaders():
                     states, targets = get_batch_from_memory(idxs, memory, target_network, q_network)
                     q_network.fit(states, targets, epochs = 1)
 
-                    if step % APPLY_STEPS == 0 or step==1:
+                    if step % APPLY_STEPS == 0:
+                        print("\n\nWeights copying!!!\n\n")
                         target_network._set_weights(q_network._get_weights())
 
                 cumulative_reward += reward

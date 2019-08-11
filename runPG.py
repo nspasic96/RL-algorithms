@@ -4,7 +4,7 @@ import numpy as np
 from collections import deque
 from keras.models import Sequential
 from keras.layers import Input, Conv2D, Dense, Flatten, Activation, BatchNormalization
-from keras.optimizers import Adam, SGD
+from keras.optimizers import Adam, SGD, RMSprop
 from skimage.io import imshow
 from skimage.color import rgb2grey
 from skimage.transform import resize
@@ -18,7 +18,8 @@ from keras.losses import categorical_crossentropy
 ENV_NAME = "SpaceInvaders-v0"
 
 GAMMA = 0.99
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.00025
+
 
 MEMORY_SIZE = 1000000
 BATCH_SIZE = 32
@@ -26,7 +27,7 @@ APPLY_STEPS = 11000
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.1
-STEPS_TO_DECREASE = 200000
+STEPS_TO_DECREASE = 1000000
 
 SAVE_STEPS = 50000
 
@@ -35,8 +36,8 @@ INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
 NUMBER_OF_ACTIONS = 6
 GOOD_GAME_TH = 100
 BATCH_NORM = False
-LOAD_PRETRAINED = None
-#LOAD_PRETRAINED = r"C:\SpaceInvadors\batch_size=32_apply_steps=10000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_102000.h5"
+#LOAD_PRETRAINED = None
+LOAD_PRETRAINED = r"C:\SpaceInvadors\env_SpaceInvaders-v0_dqn_batch_size=32_apply_steps=11000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_150000.h5"
 
 def newExploration(minn,maxx,step):
     return maxx + step*(minn-maxx)/STEPS_TO_DECREASE
@@ -81,7 +82,7 @@ class PGSolver:
             model.add(bn3)
         model.add(outputs)
 
-        model.compile(optimizer = SGD(LEARNING_RATE), loss = categorical_crossentropy)
+        model.compile(optimizer = RMSprop(LEARNING_RATE), loss = categorical_crossentropy)
         model.build([None, *INPUT_SIZE])
         print(model.summary())
         self.model = model
@@ -133,7 +134,7 @@ def stateWithHistory(stateBuffer):
     concList = [stateBuffer[i] for i in range(STATE_BUFFER_SIZE-1,-1,-1)]
     return np.concatenate(concList, axis = 2)
 
-def discountAndNormalize(rewards):
+def discountAndNormalize(rewards,normalize = False):
     n = len(rewards)
 
     res = [rewards[n-1]]
@@ -149,8 +150,9 @@ def discountAndNormalize(rewards):
     res = np.expand_dims(res,1)
     #print("res shape is {}".format(res.shape))
 
-    res -= np.mean(res)
-    res /= np.std(res)
+    if(normalize):
+        res -= np.mean(res)
+        res /= np.std(res)
 
     return res
 
@@ -204,7 +206,7 @@ def spaceInvaders():
             start = time.time()
             while(not terminal):
                 step += 1
-                env.render()
+                #env.render()
                 action = pgs.next_move(state, epsilon)
                 state_next, reward, terminal, _ = env.step(action)
                 rewards.append(reward)
