@@ -26,9 +26,9 @@ APPLY_STEPS = 11000
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.1
-STEPS_TO_DECREASE = 1000000
+STEPS_TO_DECREASE = 200000
 
-SAVE_STEPS = 11000
+SAVE_STEPS = 50000
 
 STATE_BUFFER_SIZE = 4
 INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
@@ -216,7 +216,6 @@ def spaceInvaders():
                 cumulative_reward += reward
                 state = state_next
 
-                #epsilon *= EXPLORATION_DECAY
                 epsilon = newExploration(EXPLORATION_MIN, EXPLORATION_MAX, step)
                 epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
                 

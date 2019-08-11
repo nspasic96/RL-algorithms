@@ -16,17 +16,17 @@ from keras.models import load_model, Model, clone_model
 
 ENV_NAME = "SpaceInvaders-v0"
 
-GAMMA = 0.95
-LEARNING_RATE = 0.001
+GAMMA = 0.99
+LEARNING_RATE = 0.00001
 
-MEMORY_SIZE = 1000000
-BATCH_SIZE = 32 #33 je pong
+MEMORY_SIZE = 1000
+BATCH_SIZE = 32
 APPLY_STEPS = 11000
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.1
-STEPS_TO_DECREASE = 1000000
-SAVE_STEPS = 11000
+STEPS_TO_DECREASE = 200000
+SAVE_STEPS = 50000
 
 STATE_BUFFER_SIZE = 4
 INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
@@ -57,27 +57,54 @@ def writeParams(path):
 def get_batch_from_memory(idxs, memory, target_network, q_network):
 
     states=[]
+    states_next=[]
     targets =[]
+    actions = []
+    rewards = []
+    dones = []
+
     for idx in idxs:
 
         state, action, reward, state_next, done = memory[idx]
-        #print(state_next.shape)
-        #print((1-done)*4)
-        outputs = target_network.predict(np.expand_dims(state_next,0))
-        states.append(state)
+        states.append(np.expand_dims(state,0))
+        states_next.append(np.expand_dims(state_next,0))
+        actions.append(action)
+        rewards.append(reward)
+        dones.append(done)
 
-        target = reward + (1-done)*GAMMA*np.amax(outputs)
+    states = np.concatenate(states, axis=0)
+    state_next = np.concatenate(states_next, axis=0)
 
-        target_f = q_network.predict(np.expand_dims(state,0))
-        target_f[0][action] = target
+    outputs = target_network.predict(state_next)
+    #print("Ouputs dims should be {}x{} and they are {}".format(BATCH_SIZE,NUMBER_OF_ACTIONS,outputs.shape))
+    target_f = q_network.predict(states)
+    #print("target_f dims should be {}x{} and they are {}".format(BATCH_SIZE,NUMBER_OF_ACTIONS,target_f.shape))
 
-        targets.append(target_f)
+    for i in range(target_f.shape[0]):
+        #print(outputs[0].shape)
+        target = rewards[i] + (1-dones[i])*GAMMA*np.amax(outputs[i])
+        #print("target = {}".format(target))
+        target_f[i][actions[i]] = target
 
-    states = np.array(states)
-    states = np.reshape(states, [-1, *INPUT_SIZE])
+    
+    #for idx in idxs:
 
-    targets = np.array(targets)
-    targets = np.reshape(targets, [-1, NUMBER_OF_ACTIONS])
+    #    state, action, reward, state_next, done = memory[idx]
+
+    #    outputs = target_network.predict(np.expand_dims(state_next,0))
+    #    states.append(state)
+
+    #    target = reward + (1-done)*GAMMA*np.amax(outputs)
+
+    #    target_f = q_network.predict(np.expand_dims(state,0))
+    #    print(target_f.shape)
+    #    target_f[0][action] = target
+
+    #    targets.append(target_f)
+
+
+    targets = target_f
+    #print("states shape {}, targets shape {}".format(states.shape, targets.shape))
 
     return states, targets
 
@@ -180,6 +207,7 @@ def spaceInvaders():
 
     q_network = DQNSolver() #sa najsvezijim tezinama
     target_network = DQNSolver()#sa poslednjim zamrznutim tezinama
+    target_network._set_weights(q_network._get_weights())
 
     with tf.Session() as sess:
         sess.run(init)
