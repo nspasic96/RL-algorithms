@@ -3,7 +3,7 @@ import gym
 import numpy as np
 from collections import deque
 from keras.models import Sequential
-from keras.layers import Input, Conv2D, Dense, Flatten, Activation, BatchNormalization
+from keras.layers import Input, Conv2D, Dense, Flatten, Activation, BatchNormalization, Dropout
 from keras.optimizers import Adam, SGD, RMSprop
 from skimage.io import imshow
 from skimage.color import rgb2grey
@@ -15,19 +15,20 @@ import time
 from keras.models import load_model, Model, clone_model
 from keras.losses import categorical_crossentropy
 
-ENV_NAME = "SpaceInvaders-v0"
+ENV_NAME = "Pong-v0"
 
 GAMMA = 0.99
-LEARNING_RATE = 0.00025
+LEARNING_RATE = 0.0003
 
 
 MEMORY_SIZE = 1000000
 BATCH_SIZE = 32
 APPLY_STEPS = 11000
+EPISODES_UPDATE = 10
 
 EXPLORATION_MAX = 1.0
 EXPLORATION_MIN = 0.1
-STEPS_TO_DECREASE = 1000000
+STEPS_TO_DECREASE = 10000000
 
 SAVE_STEPS = 50000
 
@@ -58,7 +59,7 @@ def writeParams(path):
         f.write("BATCH_NORM : {}\n".format(BATCH_NORM))
 
 class PGSolver:
-    def __init__(self):
+    def __init__(self, test=False):
         #input to network will be (None, 90,84,4)
         conv1 = Conv2D(16,8, strides = (4,4), activation = Activation("relu"))
         bn1 = BatchNormalization()
@@ -71,13 +72,19 @@ class PGSolver:
 
         model = Sequential()
         model.add(conv1)
+        if not test:
+            model.add(Dropout(0.5))
         if(BATCH_NORM):
             model.add(bn1)
         model.add(conv2)
+        if not test:
+            model.add(Dropout(0.5))
         if(BATCH_NORM):
             model.add(bn2)
         model.add(flat_feature)
         model.add(fc1)
+        if not test:
+            model.add(Dropout(0.5))
         if(BATCH_NORM):
             model.add(bn3)
         model.add(outputs)
@@ -174,15 +181,17 @@ def spaceInvaders():
 
     pgs = PGSolver()
 
-    with tf.Session() as sess:
-        sess.run(init)
-        writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
+    cTargets = []
+    cInputs = []
     
     epsilon = EXPLORATION_MAX
     
     curr_maxx = -1000
     e=0
     with tf.Session() as sess:
+
+        sess.run(init)
+        writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
         step = 0
         while True:
             e+=1
@@ -206,7 +215,8 @@ def spaceInvaders():
             start = time.time()
             while(not terminal):
                 step += 1
-                #env.render()
+                if(step > STEPS_TO_DECREASE):
+                    env.render()
                 action = pgs.next_move(state, epsilon)
                 state_next, reward, terminal, _ = env.step(action)
                 rewards.append(reward)
@@ -227,14 +237,28 @@ def spaceInvaders():
                     el = time.time() - st
                     print("{}. steps done in episode {}, work saved in {}s".format(step,e,el))
 
-            discRewards = discountAndNormalize(rewards)
+            discRewards = discountAndNormalize(rewards, True)
             actionsOneHot = np.zeros(shape=(len(actions),NUMBER_OF_ACTIONS))
             for idx,i in enumerate(actions):
                 actionsOneHot[idx,i] = 1
             
             targets = discRewards*actionsOneHot
             inputs = np.reshape(memory, [-1, *INPUT_SIZE])
-            pgs.fit(inputs, targets, epochs=1)
+
+            if(e % EPISODES_UPDATE == 0):
+                ttInputs = cInputs[0]
+                ttTargets = cTargets[0]
+                n = len(cInputs)
+                for i in range(1,n):
+                    ttInputs = np.vstack((ttInputs, cInputs[i]))
+                    ttTargets = np.vstack((ttTargets, cTargets[i]))
+
+                pgs.model.fit(ttInputs, ttTargets, epochs=1, batch_size=128)
+                cInputs = []
+                cTargets = []
+            else:
+                cInputs.append(inputs)
+                cTargets.append(targets)                
 
             elapsed = time.time() - start
             if(cumulative_reward > GOOD_GAME_TH):

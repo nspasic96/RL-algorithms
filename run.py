@@ -14,7 +14,7 @@ import tensorflow as tf
 import time 
 from keras.models import load_model, Model, clone_model
 
-ENV_NAME = "SpaceInvaders-v0"
+ENV_NAME = "CartPole-v0"
 
 GAMMA = 0.99
 LEARNING_RATE = 0.00025
