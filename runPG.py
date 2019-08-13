@@ -14,34 +14,69 @@ import tensorflow as tf
 import time 
 from keras.models import load_model, Model, clone_model
 from keras.losses import categorical_crossentropy
+from utils import *
+from solvers import Solver
+import argparse
 
-ENV_NAME = "Pong-v0"
+parser = argparse.ArgumentParser()
 
-GAMMA = 0.99
-LEARNING_RATE = 0.0003
+parser.add_argument('--ENV_NAME', default = "SpaceInvaders-v0")
+parser.add_argument('--inp', default = "vector")
+parser.add_argument('--BATCH_SIZE', default = 32)
+parser.add_argument('--LEARNING_RATE', default = 0.0003)
+parser.add_argument('--EXPLORATION_MAX', default = 1)
+parser.add_argument('--EXPLORATION_MIN', default = 0.1)
+parser.add_argument('--STEPS_TO_DECREASE', default = 1000000)
+parser.add_argument('--SAVE_STEPS', default = 50000)
+parser.add_argument('--GAMMA', default = 0.95)
+parser.add_argument('--MEMORY_SIZE', default = 1000000)
+parser.add_argument('--APPLY_STEPS', default = 11000)
+parser.add_argument('--EPISODES_UPDATE', default = 10)
+parser.add_argument('--STATE_BUFFER_SIZE', default = 4)
+parser.add_argument('--BATCH_NORM', default = 0)
+parser.add_argument('--NUMBER_OF_ACTIONS', default = 6)
+parser.add_argument('--RUNNING_MEAN_ACC', default = 50)
+parser.add_argument('--LOAD_PRETRAINED', default = None)
+parser.add_argument('--NORMALIZE_REWARDS', default = 0)
 
+args = parser.parse_args()
 
-MEMORY_SIZE = 1000000
-BATCH_SIZE = 32
-APPLY_STEPS = 11000
-EPISODES_UPDATE = 10
+ENV_NAME = args.ENV_NAME
 
-EXPLORATION_MAX = 1.0
-EXPLORATION_MIN = 0.1
-STEPS_TO_DECREASE = 10000000
+BATCH_SIZE = args.BATCH_SIZE
+print(type(BATCH_SIZE))
+LEARNING_RATE = args.LEARNING_RATE
+EXPLORATION_MAX = args.EXPLORATION_MAX
+EXPLORATION_MIN = args.EXPLORATION_MIN
+STEPS_TO_DECREASE = args.STEPS_TO_DECREASE
+SAVE_STEPS = args.SAVE_STEPS
+NORMALIZE_REWARDS = bool(int(args.NORMALIZE_REWARDS))
 
-SAVE_STEPS = 50000
+GAMMA = args.GAMMA
+MEMORY_SIZE = args.MEMORY_SIZE
+APPLY_STEPS = args.APPLY_STEPS
+EPISODES_UPDATE = args.EPISODES_UPDATE
 
-STATE_BUFFER_SIZE = 4
-INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
-NUMBER_OF_ACTIONS = 6
-GOOD_GAME_TH = 100
-BATCH_NORM = False
-#LOAD_PRETRAINED = None
-LOAD_PRETRAINED = r"C:\SpaceInvadors\env_SpaceInvaders-v0_dqn_batch_size=32_apply_steps=11000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_150000.h5"
+inp = args.inp
+STATE_BUFFER_SIZE = args.STATE_BUFFER_SIZE
 
-def newExploration(minn,maxx,step):
-    return maxx + step*(minn-maxx)/STEPS_TO_DECREASE
+BATCH_NORM = bool(int(args.BATCH_NORM))
+NUMBER_OF_ACTIONS = args.NUMBER_OF_ACTIONS
+RUNNING_MEAN_ACC = args.RUNNING_MEAN_ACC
+
+LOAD_PRETRAINED = args.LOAD_PRETRAINED
+#LOAD_PRETRAINED = r"C:\SpaceInvadors\env_SpaceInvaders-v0_dqn_batch_size=32_apply_steps=11000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_150000.h5"
+
+if inp == "picture":
+    INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
+    LAYERS = None
+elif inp == "vector":
+    STATES_DESC = 4
+    if STATE_BUFFER_SIZE == 1:
+        INPUT_SIZE = [STATES_DESC]  
+    else:
+        INPUT_SIZE = [STATES_DESC, STATE_BUFFER_SIZE]
+    LAYERS = [STATES_DESC, 50, 20]
 
 def writeParams(path):
     with open(path, "a") as f:
@@ -58,128 +93,21 @@ def writeParams(path):
         f.write("INPUT_SIZE : {}\n".format(INPUT_SIZE))
         f.write("BATCH_NORM : {}\n".format(BATCH_NORM))
 
-class PGSolver:
-    def __init__(self, test=False):
-        #input to network will be (None, 90,84,4)
-        conv1 = Conv2D(16,8, strides = (4,4), activation = Activation("relu"))
-        bn1 = BatchNormalization()
-        conv2 = Conv2D(32,4, strides = (2,2), activation = Activation("relu"))
-        bn2 = BatchNormalization()
-        flat_feature = Flatten()
-        fc1 = Dense(256, activation = Activation('relu'))
-        bn3 = BatchNormalization()
-        outputs = Dense(NUMBER_OF_ACTIONS, activation = Activation('softmax'))
-
-        model = Sequential()
-        model.add(conv1)
-        if not test:
-            model.add(Dropout(0.5))
-        if(BATCH_NORM):
-            model.add(bn1)
-        model.add(conv2)
-        if not test:
-            model.add(Dropout(0.5))
-        if(BATCH_NORM):
-            model.add(bn2)
-        model.add(flat_feature)
-        model.add(fc1)
-        if not test:
-            model.add(Dropout(0.5))
-        if(BATCH_NORM):
-            model.add(bn3)
-        model.add(outputs)
-
-        model.compile(optimizer = RMSprop(LEARNING_RATE), loss = categorical_crossentropy)
-        model.build([None, *INPUT_SIZE])
-        print(model.summary())
-        self.model = model
-    
-    def _get_weights(self):
-        return self.model.get_weights()
-
-    def _set_weights(self, new_weights):
-        self.model.set_weights(new_weights)
-
-    def fit(self, states, targets, epochs):
-        self.model.fit(states, targets, epochs = epochs, verbose=0)
-
-    def predict(self, states):
-        return self.model.predict(states)
-
-    def next_move(self, state, epsilon):
-        if random.random() < epsilon:
-            return np.random.randint(0,NUMBER_OF_ACTIONS)
-        else:
-            return np.argmax(self.predict(np.expand_dims(state,0)))
-    def load_weights(self, path):
-        self.model.load_weights(path)
-    def save_weights(self, step):
-        self.model.save_weights(path + '/model_weights_{}.h5'.format(step))
-    def save_weights_for_max(self, e,curr_maxx):
-        self.model.save_weights(path + '/model_weights_{}_max_{}.h5'.format(e, curr_maxx))
-
-
-def processState(state, stateBuffer):
-    state = transformState(state)
-    stateBuffer.append(state)
-    state = stateWithHistory(stateBuffer)
-    return state
-
-def transformState(state):
-    shapeToResize = [110, 84]
-    grey = rgb2grey(state)
-    greyResized = resize(grey, shapeToResize)
-    offset = [12,8]
-    cropped = greyResized[offset[0]:-offset[1],:]
-    final = np.expand_dims(cropped,2)
-
-    #viewer = ImageViewer(np.squeeze(final[:,:],2))
-    #viewer.show() 
-    return final
-
-def stateWithHistory(stateBuffer):
-    concList = [stateBuffer[i] for i in range(STATE_BUFFER_SIZE-1,-1,-1)]
-    return np.concatenate(concList, axis = 2)
-
-def discountAndNormalize(rewards,normalize = False):
-    n = len(rewards)
-
-    res = [rewards[n-1]]
-    runningAdd = rewards[n-1]
-    for i in range(n-2,-1,-1):
-        runningAdd*=GAMMA
-        runningAdd+=rewards[i]
-        aux = [runningAdd]
-        aux.extend(res)
-        res = aux
-
-    res = np.array(res)
-    res = np.expand_dims(res,1)
-    #print("res shape is {}".format(res.shape))
-
-    if(normalize):
-        res -= np.mean(res)
-        res /= np.std(res)
-
-    return res
-
-def spaceInvaders():
-    print("Trainininininng")
+def game(path):
     env = gym.make(ENV_NAME)
     gameScores = []
-    goodGameScores = []
 
     #Tensorflow initializations
     init = tf.global_variables_initializer()
     s = tf.placeholder(dtype = tf.float32)
     rew = tf.placeholder(dtype = tf.float32)
     gameScoreMean = tf.reduce_mean(s)
-    mean_summary = tf.summary.scalar(tensor = gameScoreMean, name = "mean")
-    res_summary = tf.summary.scalar(tensor = rew, name = "rew")
+    tf.summary.scalar(tensor = gameScoreMean, name = "mean_last_{}_episodes".format(RUNNING_MEAN_ACC))
+    tf.summary.scalar(tensor = rew, name = "reward")
     
     summaries = tf.summary.merge_all()
 
-    pgs = PGSolver()
+    pgs = Solver("PG", NUMBER_OF_ACTIONS, LEARNING_RATE,BATCH_NORM,STATE_BUFFER_SIZE,inp=inp, vector_dims=LAYERS)
 
     cTargets = []
     cInputs = []
@@ -194,6 +122,7 @@ def spaceInvaders():
         writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
         step = 0
         while True:
+            #Episod starts here
             e+=1
 
             rewards = []
@@ -202,12 +131,13 @@ def spaceInvaders():
 
             stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
             for _ in range(STATE_BUFFER_SIZE):
-                stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:2],1]))
+                stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:-1],1]))
 
             terminal = False
             state = env.reset()
 
-            state = processState(state, stateBuffer)
+            if(inp == "picture"):
+                state = processState(state, stateBuffer, STATE_BUFFER_SIZE)
 
             cumulative_reward = 0
             max_reached = 0
@@ -215,29 +145,31 @@ def spaceInvaders():
             start = time.time()
             while(not terminal):
                 step += 1
-                if(step > STEPS_TO_DECREASE):
-                    env.render()
+                #if(step > STEPS_TO_DECREASE):
+                env.render()
                 action = pgs.next_move(state, epsilon)
                 state_next, reward, terminal, _ = env.step(action)
                 rewards.append(reward)
                 actions.append(action)
 
-                state_next = processState(state_next, stateBuffer)
+                if(inp == "picture"):
+                    state_next = processState(state_next, stateBuffer, STATE_BUFFER_SIZE)
+                
                 memory.append(state)
 
                 cumulative_reward += reward
                 state = state_next
 
-                epsilon = newExploration(EXPLORATION_MIN, EXPLORATION_MAX, step)
+                epsilon = newExploration(EXPLORATION_MIN, EXPLORATION_MAX, step, STEPS_TO_DECREASE)
                 epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
                 
                 if step % SAVE_STEPS == 0:
                     st = time.time()
-                    pgs.save_weights(step)
+                    pgs.save_weights(step, path)
                     el = time.time() - st
                     print("{}. steps done in episode {}, work saved in {}s".format(step,e,el))
 
-            discRewards = discountAndNormalize(rewards, True)
+            discRewards = discountAndNormalize(rewards,GAMMA,NORMALIZE_REWARDS)
             actionsOneHot = np.zeros(shape=(len(actions),NUMBER_OF_ACTIONS))
             for idx,i in enumerate(actions):
                 actionsOneHot[idx,i] = 1
@@ -253,6 +185,8 @@ def spaceInvaders():
                     ttInputs = np.vstack((ttInputs, cInputs[i]))
                     ttTargets = np.vstack((ttTargets, cTargets[i]))
 
+                #print("ttInputs shape = {}".format(ttInputs.shape))
+                #print("ttTargets shape = {}".format(ttTargets.shape))
                 pgs.model.fit(ttInputs, ttTargets, epochs=1, batch_size=128)
                 cInputs = []
                 cTargets = []
@@ -261,23 +195,25 @@ def spaceInvaders():
                 cTargets.append(targets)                
 
             elapsed = time.time() - start
-            if(cumulative_reward > GOOD_GAME_TH):
-                goodGameScores.append(cumulative_reward)
             gameScores.append(cumulative_reward)
 
             if(cumulative_reward > curr_maxx):
                 curr_maxx = cumulative_reward
                 max_reached += 1
                 st = time.time()
-                pgs.save_weights_for_max(e,curr_maxx)
+                pgs.save_weights_for_max(e,curr_maxx,path)
                 el = time.time() - st
                 print("New max({}) reached! Weights saved in {}s".format(curr_maxx, el))
-
-            summary = sess.run(summaries, feed_dict={s : gameScores, rew : cumulative_reward})
+            
+            start = 0
+            if(e >= RUNNING_MEAN_ACC):
+                start = -RUNNING_MEAN_ACC-1
+            
+            summary = sess.run(summaries, feed_dict={s : gameScores[start:-1], rew : cumulative_reward})
             writer.add_summary(summary, e)
                 
-            print("Episode {} over(total {} steps until now) in {}s, total reward is {} and exploration rate is now {}. \n Mean score is {}, and filtered mean score is {}(total {} games count)".format(e,step, 
-                elapsed, cumulative_reward, epsilon, np.mean(gameScores), np.mean(goodGameScores), len(goodGameScores)))
+            print("Episode {} over(total {} steps until now) in {}s, total reward is {} and exploration rate is now {}. \n Mean score is {}.".format(e,step, 
+                elapsed, cumulative_reward, epsilon, np.mean(gameScores)))
 
 if __name__ == "__main__":
 
@@ -286,4 +222,4 @@ if __name__ == "__main__":
         print("Creating folder")
         os.mkdir(path)
     writeParams(path + "/params.txt")
-    spaceInvaders()
+    game(path)
