@@ -68,7 +68,7 @@ class Solver:
         elif inp == "vector":            
             model = Sequential()
             for i in vector_dims[1:]:
-                fc = Dense(i, activation = Activation('relu'))
+                fc = Dense(i, activation = Activation('relu'), kernel_initializer='random_normal')
                 model.add(fc)
                 if not test and dropout > 0:
                     model.add(Dropout(dropout))
@@ -76,8 +76,11 @@ class Solver:
                     bn = BatchNormalization()
                     model.add(bn)
             
-            fc = Dense(num_of_act)
-            model.add(fc)
+            if(t == "PG"):
+                outputs = Dense(num_of_act, activation = Activation('softmax'))
+            elif(t == "DQN"):
+                outputs = Dense(num_of_act)
+            model.add(outputs)
 
             if(t == "PG"):
                 model.compile(optimizer = RMSprop(lr), loss = categorical_crossentropy)
@@ -102,10 +105,18 @@ class Solver:
         return self.model.predict(states)
 
     def next_move(self, state, epsilon):
+        rand = False
+        next_move = -1
+        certainties = -1
         if random.random() < epsilon:
-            return np.random.randint(0,self.num_of_act)
+            next_move = np.random.randint(0,self.num_of_act)
+            rand = True
         else:
-            return np.argmax(self.predict(np.expand_dims(state,0)))
+            certainties = self.predict(np.expand_dims(state,0))
+            next_move = np.argmax(certainties)
+
+        #print("Next move is chosen. Move random = {}, action selected = {} with actions certainties {}".format(rand, next_move, certainties), end ='/r')
+        return next_move
 
     def load_weights(self, path):
         self.model.load_weights(path)

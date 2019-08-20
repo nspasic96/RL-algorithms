@@ -27,6 +27,7 @@ parser.add_argument('--LEARNING_RATE', default = 0.0003)
 parser.add_argument('--EXPLORATION_MAX', default = 1)
 parser.add_argument('--EXPLORATION_MIN', default = 0.1)
 parser.add_argument('--STEPS_TO_DECREASE', default = 1000000)
+parser.add_argument('--DECRESE_EVERY_STEP', default = 0)
 parser.add_argument('--SAVE_STEPS', default = 50000)
 parser.add_argument('--GAMMA', default = 0.95)
 parser.add_argument('--MEMORY_SIZE', default = 1000000)
@@ -43,26 +44,27 @@ args = parser.parse_args()
 
 ENV_NAME = args.ENV_NAME
 
-BATCH_SIZE = args.BATCH_SIZE
+BATCH_SIZE = int(args.BATCH_SIZE)
 print(type(BATCH_SIZE))
-LEARNING_RATE = args.LEARNING_RATE
-EXPLORATION_MAX = args.EXPLORATION_MAX
-EXPLORATION_MIN = args.EXPLORATION_MIN
-STEPS_TO_DECREASE = args.STEPS_TO_DECREASE
-SAVE_STEPS = args.SAVE_STEPS
+LEARNING_RATE = float(args.LEARNING_RATE)
+EXPLORATION_MAX = float(args.EXPLORATION_MAX)
+EXPLORATION_MIN = float(args.EXPLORATION_MIN)
+STEPS_TO_DECREASE = int(args.STEPS_TO_DECREASE)
+DECRESE_EVERY_STEP = bool(int(args.DECRESE_EVERY_STEP))
+SAVE_STEPS = int(args.SAVE_STEPS)
 NORMALIZE_REWARDS = bool(int(args.NORMALIZE_REWARDS))
 
-GAMMA = args.GAMMA
-MEMORY_SIZE = args.MEMORY_SIZE
-APPLY_STEPS = args.APPLY_STEPS
-EPISODES_UPDATE = args.EPISODES_UPDATE
+GAMMA = float(args.GAMMA)
+MEMORY_SIZE = int(args.MEMORY_SIZE)
+APPLY_STEPS = int(args.APPLY_STEPS)
+EPISODES_UPDATE = int(args.EPISODES_UPDATE)
 
 inp = args.inp
-STATE_BUFFER_SIZE = args.STATE_BUFFER_SIZE
+STATE_BUFFER_SIZE = int(args.STATE_BUFFER_SIZE)
 
 BATCH_NORM = bool(int(args.BATCH_NORM))
-NUMBER_OF_ACTIONS = args.NUMBER_OF_ACTIONS
-RUNNING_MEAN_ACC = args.RUNNING_MEAN_ACC
+NUMBER_OF_ACTIONS = int(args.NUMBER_OF_ACTIONS)
+RUNNING_MEAN_ACC = int(args.RUNNING_MEAN_ACC)
 
 LOAD_PRETRAINED = args.LOAD_PRETRAINED
 #LOAD_PRETRAINED = r"C:\SpaceInvadors\env_SpaceInvaders-v0_dqn_batch_size=32_apply_steps=11000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_150000.h5"
@@ -71,7 +73,7 @@ if inp == "picture":
     INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
     LAYERS = None
 elif inp == "vector":
-    STATES_DESC = 4
+    STATES_DESC = 128
     if STATE_BUFFER_SIZE == 1:
         INPUT_SIZE = [STATES_DESC]  
     else:
@@ -92,9 +94,11 @@ def writeParams(path):
         f.write("STATE_BUFFER_SIZE : {}\n".format(STATE_BUFFER_SIZE))
         f.write("INPUT_SIZE : {}\n".format(INPUT_SIZE))
         f.write("BATCH_NORM : {}\n".format(BATCH_NORM))
+        f.write("DECRESE_EVERY_STEP : {}\n".format(DECRESE_EVERY_STEP))
 
 def game(path):
     env = gym.make(ENV_NAME)
+    print( env.unwrapped.get_action_meanings())
     gameScores = []
 
     #Tensorflow initializations
@@ -147,8 +151,17 @@ def game(path):
                 step += 1
                 #if(step > STEPS_TO_DECREASE):
                 env.render()
-                action = pgs.next_move(state, epsilon)
+                action_saved = pgs.next_move(state, epsilon)
+
+                if(action_saved == 0):
+                    action = 2
+                else:
+                    action = 3
+
                 state_next, reward, terminal, _ = env.step(action)
+
+                action = action_saved
+                
                 rewards.append(reward)
                 actions.append(action)
 
@@ -160,9 +173,12 @@ def game(path):
                 cumulative_reward += reward
                 state = state_next
 
-                epsilon = newExploration(EXPLORATION_MIN, EXPLORATION_MAX, step, STEPS_TO_DECREASE)
+                if DECRESE_EVERY_STEP:
+                    epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,step,STEPS_TO_DECREASE)
+                else:
+                    epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,e,STEPS_TO_DECREASE)
                 epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
-                
+
                 if step % SAVE_STEPS == 0:
                     st = time.time()
                     pgs.save_weights(step, path)
@@ -203,7 +219,6 @@ def game(path):
                 st = time.time()
                 pgs.save_weights_for_max(e,curr_maxx,path)
                 el = time.time() - st
-                print("New max({}) reached! Weights saved in {}s".format(curr_maxx, el))
             
             start = 0
             if(e >= RUNNING_MEAN_ACC):
@@ -212,7 +227,7 @@ def game(path):
             summary = sess.run(summaries, feed_dict={s : gameScores[start:-1], rew : cumulative_reward})
             writer.add_summary(summary, e)
                 
-            print("Episode {} over(total {} steps until now) in {}s, total reward is {} and exploration rate is now {}. \n Mean score is {}.".format(e,step, 
+            print("Episode {} over(total {} steps until now) in {}s, total reward is {} and exploration rate is now {}. \n Mean score is {}.\r".format(e,step, 
                 elapsed, cumulative_reward, epsilon, np.mean(gameScores)))
 
 if __name__ == "__main__":

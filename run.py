@@ -27,6 +27,7 @@ parser.add_argument('--LEARNING_RATE', default = 0.0003)
 parser.add_argument('--EXPLORATION_MAX', default = 1)
 parser.add_argument('--EXPLORATION_MIN', default = 0.01)
 parser.add_argument('--STEPS_TO_DECREASE', default = 1000000)
+parser.add_argument('--DECRESE_EVERY_STEP', default = 0)
 parser.add_argument('--SAVE_STEPS', default = 50000)
 parser.add_argument('--GAMMA', default = 0.95)
 parser.add_argument('--MEMORY_SIZE', default = 1000000)
@@ -49,6 +50,7 @@ LEARNING_RATE = args.LEARNING_RATE
 EXPLORATION_MAX = args.EXPLORATION_MAX
 EXPLORATION_MIN = args.EXPLORATION_MIN
 STEPS_TO_DECREASE = args.STEPS_TO_DECREASE
+DECRESE_EVERY_STEP = bool(int(args.DECRESE_EVERY_STEP))
 SAVE_STEPS = args.SAVE_STEPS
 NORMALIZE_REWARDS = bool(int(args.NORMALIZE_REWARDS))
 
@@ -146,7 +148,7 @@ def game(path):
             start = time.time()
             while(not terminal):
                 step += 1
-                #env.render()
+                env.render()
                 action = q_network.next_move(state, epsilon)
                 state_next, reward, terminal, _ = env.step(action)
 
@@ -165,7 +167,10 @@ def game(path):
                 cumulative_reward += reward
                 state = state_next
 
-                epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,step)
+                if DECRESE_EVERY_STEP:
+                    epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,step)
+                else:
+                    epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,e)
                 epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
                 
                 if step % SAVE_STEPS == 0:
@@ -174,8 +179,6 @@ def game(path):
                     el = time.time() - st
 
             elapsed = time.time() - start
-            if(cumulative_reward > GOOD_GAME_TH):
-                goodGameScores.append(cumulative_reward)
             gameScores.append(cumulative_reward)
 
             if(cumulative_reward > curr_maxx):
@@ -184,7 +187,6 @@ def game(path):
                 st = time.time()
                 q_network.save_weights_for_max(e,curr_maxx)
                 el = time.time() - st
-                print("New max({}) reached! Weights saved in {}s".format(curr_maxx, el))
 
             start = 0
             if(e >= RUNNING_MEAN_ACC):
@@ -193,8 +195,8 @@ def game(path):
             summary = sess.run(summaries, feed_dict={s : gameScores[start:-1], rew : cumulative_reward})
             writer.add_summary(summary, e)
                             
-            print("Episode {} over(total {} steps until now) in {}s, total reward is {} and exploration rate is now {}. \n Mean score is {}, and filtered mean score is {}(total {} games count)".format(e,step, 
-                elapsed, cumulative_reward, epsilon, np.mean(gameScores), np.mean(goodGameScores), len(goodGameScores)))
+            print("Episode {} over(total {} steps until now) in {}s, total reward is {} and exploration rate is now {}. \n Mean score is {}.".format(e,step, 
+                elapsed, cumulative_reward, epsilon, np.mean(gameScores)), end="\r")
 
 if __name__ == "__main__":
 
