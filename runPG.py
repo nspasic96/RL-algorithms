@@ -16,6 +16,7 @@ from keras.models import load_model, Model, clone_model
 from keras.losses import categorical_crossentropy
 from utils import *
 from solvers import Solver
+from keras.callbacks import Callback
 import argparse
 
 parser = argparse.ArgumentParser()
@@ -70,7 +71,7 @@ LOAD_PRETRAINED = args.LOAD_PRETRAINED
 #LOAD_PRETRAINED = r"C:\SpaceInvadors\env_SpaceInvaders-v0_dqn_batch_size=32_apply_steps=11000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_150000.h5"
 
 if inp == "picture":
-    INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
+    INPUT_SIZE = [90,84, 1]
     LAYERS = None
 elif inp == "vector":
     STATES_DESC = 128
@@ -78,7 +79,7 @@ elif inp == "vector":
         INPUT_SIZE = [STATES_DESC]  
     else:
         INPUT_SIZE = [STATES_DESC, STATE_BUFFER_SIZE]
-    LAYERS = [STATES_DESC, 50, 20]
+    LAYERS = [STATES_DESC, 50]
 
 def writeParams(path):
     with open(path, "a") as f:
@@ -105,13 +106,38 @@ def game(path):
     init = tf.global_variables_initializer()
     s = tf.placeholder(dtype = tf.float32)
     rew = tf.placeholder(dtype = tf.float32)
+    histData1 = tf.placeholder(dtype = tf.int64)
+    histData2 = tf.placeholder(dtype = tf.int64)
     gameScoreMean = tf.reduce_mean(s)
+    
+    pgs = Solver("PG", NUMBER_OF_ACTIONS, LEARNING_RATE,BATCH_NORM,STATE_BUFFER_SIZE,inp=inp, vector_dims=LAYERS)
+
     tf.summary.scalar(tensor = gameScoreMean, name = "mean_last_{}_episodes".format(RUNNING_MEAN_ACC))
     tf.summary.scalar(tensor = rew, name = "reward")
+
+    weights_history = []
     
+    class MyCallback(Callback):
+        def on_batch_end(self, batch, logs):
+            A1, A2, A3, A4 = pgs.model.get_weights()
+            
+            #print(A1.shape)
+            #print(A3.shape)
+            
+            w1=A1
+            w2=A3
+            weights = [w1, w2]
+            weights_history.append(weights)
+
+            with open(path+"/weights.txt", "a+") as f:
+                f.write("W1 = \n {} \n ".format(w1))
+                f.write("W2 = \n {} \n ".format(w2))
+            
+    tf.summary.histogram("weightsHist1", histData1)
+    tf.summary.histogram("weightsHist2", histData2)    
+
     summaries = tf.summary.merge_all()
 
-    pgs = Solver("PG", NUMBER_OF_ACTIONS, LEARNING_RATE,BATCH_NORM,STATE_BUFFER_SIZE,inp=inp, vector_dims=LAYERS)
 
     cTargets = []
     cInputs = []
@@ -135,13 +161,14 @@ def game(path):
 
             stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
             for _ in range(STATE_BUFFER_SIZE):
-                stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:-1],1]))
+                stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:-1]]))
 
             terminal = False
+
             state = env.reset()
 
             if(inp == "picture"):
-                state = processState(state, stateBuffer, STATE_BUFFER_SIZE)
+                state = processState2(state, stateBuffer, STATE_BUFFER_SIZE)
 
             cumulative_reward = 0
             max_reached = 0
@@ -149,24 +176,24 @@ def game(path):
             start = time.time()
             while(not terminal):
                 step += 1
-                #if(step > STEPS_TO_DECREASE):
-                env.render()
-                action_saved = pgs.next_move(state, epsilon)
+                
+                if(e % EPISODES_UPDATE == 1):
+                    env.render()
 
-                if(action_saved == 0):
-                    action = 2
-                else:
-                    action = 3
+                action = pgs.next_move(state, epsilon)
+                
+                action += 2
 
                 state_next, reward, terminal, _ = env.step(action)
 
-                action = action_saved
+                action -= 2
                 
                 rewards.append(reward)
+
                 actions.append(action)
 
                 if(inp == "picture"):
-                    state_next = processState(state_next, stateBuffer, STATE_BUFFER_SIZE)
+                    state_next = processState2(state_next, stateBuffer, STATE_BUFFER_SIZE)
                 
                 memory.append(state)
 
@@ -186,11 +213,13 @@ def game(path):
                     print("{}. steps done in episode {}, work saved in {}s".format(step,e,el))
 
             discRewards = discountAndNormalize(rewards,GAMMA,NORMALIZE_REWARDS)
+
             actionsOneHot = np.zeros(shape=(len(actions),NUMBER_OF_ACTIONS))
             for idx,i in enumerate(actions):
-                actionsOneHot[idx,i] = 1
+                actionsOneHot[idx,i] = -1
             
             targets = discRewards*actionsOneHot
+            
             inputs = np.reshape(memory, [-1, *INPUT_SIZE])
 
             if(e % EPISODES_UPDATE == 0):
@@ -201,9 +230,11 @@ def game(path):
                     ttInputs = np.vstack((ttInputs, cInputs[i]))
                     ttTargets = np.vstack((ttTargets, cTargets[i]))
 
-                #print("ttInputs shape = {}".format(ttInputs.shape))
-                #print("ttTargets shape = {}".format(ttTargets.shape))
-                pgs.model.fit(ttInputs, ttTargets, epochs=1, batch_size=128)
+
+                #ks=TensorBoard(log_dir="train/{}".format(time.time()), histogram_freq=1, write_graph=True, write_grads=False, batch_size=BATCH_SIZE)
+                cb = MyCallback()
+                
+                pgs.model.fit(ttInputs, ttTargets, epochs=1, batch_size=128)#, callbacks=[cb])
                 cInputs = []
                 cTargets = []
             else:
@@ -224,8 +255,9 @@ def game(path):
             if(e >= RUNNING_MEAN_ACC):
                 start = -RUNNING_MEAN_ACC-1
             
-            summary = sess.run(summaries, feed_dict={s : gameScores[start:-1], rew : cumulative_reward})
-            writer.add_summary(summary, e)
+            if(len(weights_history) > 0):
+                summary = sess.run(summaries, feed_dict={s : gameScores[start:-1], rew : cumulative_reward, histData1 : weights_history[-1][0], histData2 : weights_history[-1][1]})
+                writer.add_summary(summary, e)
                 
             print("Episode {} over(total {} steps until now) in {}s, total reward is {} and exploration rate is now {}. \n Mean score is {}.\r".format(e,step, 
                 elapsed, cumulative_reward, epsilon, np.mean(gameScores)))

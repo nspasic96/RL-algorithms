@@ -26,7 +26,10 @@ class Solver:
     #vector_dims : list of network layers size(inluding input and exluding output)
     def __init__(self, t, num_of_act, lr, batch_norm, history_length, test=False, dropout=0, inp="picture", vector_dims=None):
         self.num_of_act = num_of_act
-        self.input_size = [90,84,history_length]
+        if(history_length > 2):
+            self.input_size = [90,84,history_length]
+        else:
+            self.input_size = [90,84,1]
         #input to network will be (None, 90,84,4)
         if inp == "picture":
             conv1 = Conv2D(16,8, strides = (4,4), activation = Activation("relu"))
@@ -112,6 +115,8 @@ class Solver:
             next_move = np.random.randint(0,self.num_of_act)
             rand = True
         else:
+            #certainties = self.predict(np.expand_dims(state,0))
+                    
             certainties = self.predict(np.expand_dims(state,0))
             next_move = np.argmax(certainties)
 

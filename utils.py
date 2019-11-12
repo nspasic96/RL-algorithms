@@ -22,10 +22,22 @@ def stateWithHistory(stateBuffer,STATE_BUFFER_SIZE):
     concList = [stateBuffer[i] for i in range(STATE_BUFFER_SIZE-1,-1,-1)]
     return np.concatenate(concList, axis = 2)
 
+def stateWithHistory2(stateBuffer, STATE_BUFFER_SIZE):
+    assert(len(stateBuffer) == 2)
+    res = stateBuffer[1] - stateBuffer[0]
+    res = np.expand_dims(res,2)
+    return res
+
 def processState(state, stateBuffer, STATE_BUFFER_SIZE):
     state = transformState(state)
     stateBuffer.append(state)
     state = stateWithHistory(stateBuffer, STATE_BUFFER_SIZE)
+    return state
+
+def processState2(state, stateBuffer, STATE_BUFFER_SIZE):
+    state = transformState2(state)
+    stateBuffer.append(state)
+    state = stateWithHistory2(stateBuffer, STATE_BUFFER_SIZE)
     return state
 
 def transformState(state):
@@ -40,21 +52,28 @@ def transformState(state):
     #viewer.show() 
     return final
 
+def transformState2(state):
+    shapeToResize = [110, 84]
+    grey = rgb2grey(state)
+    greyResized = resize(grey, shapeToResize)
+    offset = [12,8]
+    final = greyResized[offset[0]:-offset[1],:]
+
+    #viewer = ImageViewer(np.squeeze(final[:,:],2))
+    #viewer.show() 
+    return final
+
 def discountAndNormalize(rewards,GAMMA,normalize = False):
-    n = len(rewards)
 
-    res = [rewards[n-1]]
-    runningAdd = rewards[n-1]
-    for i in range(n-2,-1,-1):
-        runningAdd*=GAMMA
-        runningAdd+=rewards[i]
-        aux = [runningAdd]
-        aux.extend(res)
-        res = aux
+    discounted_r = np.zeros_like(rewards)
+    running_add = 0
+    for t in range(len(rewards)-1, -1, -1):
+        if rewards[t] != 0: running_add = 0 # reset the sum, since this was a game boundary (pong specific!)
+        running_add = running_add * GAMMA + rewards[t]
+        discounted_r[t] = running_add
 
-    res = np.array(res)
+    res = np.array(discounted_r)
     res = np.expand_dims(res,1)
-    #print("res shape is {}".format(res.shape))
 
     if(normalize):
         res -= np.mean(res)
