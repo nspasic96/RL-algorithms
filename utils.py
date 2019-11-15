@@ -14,6 +14,9 @@ import tensorflow as tf
 import time 
 from keras.models import load_model, Model, clone_model
 from keras.losses import categorical_crossentropy
+from PIL import Image
+
+import matplotlib.pyplot as plt
 
 def newExploration(minn,maxx,step,STEPS_TO_DECREASE):
     return maxx + step*(minn-maxx)/STEPS_TO_DECREASE
@@ -35,6 +38,7 @@ def processState(state, stateBuffer, STATE_BUFFER_SIZE):
     return state
 
 def processState2(state, stateBuffer, STATE_BUFFER_SIZE):
+    
     state = transformState2(state)
     stateBuffer.append(state)
     state = stateWithHistory2(stateBuffer, STATE_BUFFER_SIZE)
@@ -54,13 +58,22 @@ def transformState(state):
 
 def transformState2(state):
     shapeToResize = [110, 84]
+    
     grey = rgb2grey(state)
     greyResized = resize(grey, shapeToResize)
     offset = [12,8]
     final = greyResized[offset[0]:-offset[1],:]
+    #hist = np.histogram(final)
+    #print(hist)
+    #final[final == 0.32680196] = 0 # erase background
+    #final[final == 0.9254902] = 0 # erase background
+    #final[final != 0] = 1 # set paddles and ball to 1
+    #print(np.min(final))
+    #print(np.max(final))
 
-    #viewer = ImageViewer(np.squeeze(final[:,:],2))
+    #viewer = ImageViewer(final)
     #viewer.show() 
+    
     return final
 
 def discountAndNormalize(rewards,GAMMA,normalize = False):

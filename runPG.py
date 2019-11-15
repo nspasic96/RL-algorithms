@@ -31,8 +31,6 @@ parser.add_argument('--STEPS_TO_DECREASE', default = 1000000)
 parser.add_argument('--DECRESE_EVERY_STEP', default = 0)
 parser.add_argument('--SAVE_STEPS', default = 50000)
 parser.add_argument('--GAMMA', default = 0.95)
-parser.add_argument('--MEMORY_SIZE', default = 1000000)
-parser.add_argument('--APPLY_STEPS', default = 11000)
 parser.add_argument('--EPISODES_UPDATE', default = 10)
 parser.add_argument('--STATE_BUFFER_SIZE', default = 4)
 parser.add_argument('--BATCH_NORM', default = 0)
@@ -56,8 +54,6 @@ SAVE_STEPS = int(args.SAVE_STEPS)
 NORMALIZE_REWARDS = bool(int(args.NORMALIZE_REWARDS))
 
 GAMMA = float(args.GAMMA)
-MEMORY_SIZE = int(args.MEMORY_SIZE)
-APPLY_STEPS = int(args.APPLY_STEPS)
 EPISODES_UPDATE = int(args.EPISODES_UPDATE)
 
 inp = args.inp
@@ -71,7 +67,7 @@ LOAD_PRETRAINED = args.LOAD_PRETRAINED
 #LOAD_PRETRAINED = r"C:\SpaceInvadors\env_SpaceInvaders-v0_dqn_batch_size=32_apply_steps=11000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_150000.h5"
 
 if inp == "picture":
-    INPUT_SIZE = [90,84, 1]
+    INPUT_SIZE = [90,84, 1]#JUST OBSERVE DIFFERENCE IMAGE(CURRENT AND PREVIOUS STEP) TODO: IMPEMENT SUPPORT FOR LONGER HISTORY
     LAYERS = None
 elif inp == "vector":
     STATES_DESC = 128
@@ -85,9 +81,7 @@ def writeParams(path):
     with open(path, "a") as f:
         f.write("GAMMA : {}\n".format(GAMMA))
         f.write("LEARNING_RATE : {}\n".format(LEARNING_RATE))
-        f.write("MEMORY_SIZE : {}\n".format(MEMORY_SIZE))
         f.write("BATCH_SIZE : {}\n".format(BATCH_SIZE))
-        f.write("APPLY_STEPS : {}\n".format(APPLY_STEPS))
         f.write("EXPLORATION_MAX : {}\n".format(EXPLORATION_MAX))
         f.write("EXPLORATION_MIN : {}\n".format(EXPLORATION_MIN))
         f.write("STEPS_TO_DECREASE : {}\n".format(STEPS_TO_DECREASE))
@@ -169,6 +163,9 @@ def game(path):
 
             if(inp == "picture"):
                 state = processState2(state, stateBuffer, STATE_BUFFER_SIZE)
+                
+                #img = Image.fromarray(state, mode="RGB")
+                #img.show()
 
             cumulative_reward = 0
             max_reached = 0
@@ -185,6 +182,8 @@ def game(path):
                 action += 2
 
                 state_next, reward, terminal, _ = env.step(action)
+                #img = Image.fromarray(state_next, mode="RGB")
+                #img.show()
 
                 action -= 2
                 
@@ -255,16 +254,15 @@ def game(path):
             if(e >= RUNNING_MEAN_ACC):
                 start = -RUNNING_MEAN_ACC-1
             
-            if(len(weights_history) > 0):
-                summary = sess.run(summaries, feed_dict={s : gameScores[start:-1], rew : cumulative_reward, histData1 : weights_history[-1][0], histData2 : weights_history[-1][1]})
-                writer.add_summary(summary, e)
+            summary = sess.run(summaries, feed_dict={s : gameScores[start:-1], rew : cumulative_reward, histData1 : 0, histData2 : 0})
+            writer.add_summary(summary, e)
                 
             print("Episode {} over(total {} steps until now) in {}s, total reward is {} and exploration rate is now {}. \n Mean score is {}.\r".format(e,step, 
                 elapsed, cumulative_reward, epsilon, np.mean(gameScores)))
 
 if __name__ == "__main__":
 
-    path = "./env_{}_pg_batch_size={}_apply_steps={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(ENV_NAME,BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
+    path = "./env_{}_pg_batch_size={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(ENV_NAME,BATCH_SIZE,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
     if not os.path.exists(path):
         print("Creating folder")
         os.mkdir(path)

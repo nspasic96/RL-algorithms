@@ -29,7 +29,7 @@ class Solver:
         if(history_length > 2):
             self.input_size = [90,84,history_length]
         else:
-            self.input_size = [90,84,1]
+            self.input_size = [90,84,1] #DIFFERENCE IMAGE
         #input to network will be (None, 90,84,4)
         if inp == "picture":
             conv1 = Conv2D(16,8, strides = (4,4), activation = Activation("relu"))
