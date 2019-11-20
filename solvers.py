@@ -14,7 +14,7 @@ import tensorflow as tf
 import time 
 from keras.models import load_model, Model, clone_model
 from keras.losses import categorical_crossentropy
-
+import keras.backend as K
 
 class Solver:
     #t : PG or DQN
@@ -31,43 +31,66 @@ class Solver:
         else:
             self.input_size = [90,84,1] #DIFFERENCE IMAGE
         #input to network will be (None, 90,84,4)
-        if inp == "picture":
-            conv1 = Conv2D(16,8, strides = (4,4), activation = Activation("relu"))
-            bn1 = BatchNormalization()
-            conv2 = Conv2D(32,4, strides = (2,2), activation = Activation("relu"))
-            bn2 = BatchNormalization()
-            flat_feature = Flatten()
-            fc1 = Dense(256, activation = Activation('relu'))
-            bn3 = BatchNormalization()
+        if inp == "picture":            
+            
             if(t == "PG"):
-                outputs = Dense(num_of_act, activation = Activation('softmax'))
+
+                def custom_loss(y_true, y_pred):
+                    
+                    out = K.clip(y_pred, 1e-8, 1-1e-8)
+                    log_lik = y_true*K.log(out)
+
+                    return K.sum(-log_lik*advantages)
+            
+                input = Input(shape=(self.input_size))
+                advantages = Input(shape=[1])
+                l = Conv2D(16,8, strides = (4,4), activation = Activation("relu"))(input)
+                if(batch_norm):
+                    l = BatchNormalization()(l)
+                l = Conv2D(32,4, strides = (2,2), activation = Activation("relu"))(l)
+                if(batch_norm):
+                    l = BatchNormalization()(l)
+                l = Flatten()(l)
+                l = Dense(100, activation = Activation('relu'))(l)
+                if(batch_norm):
+                    l = BatchNormalization()(l)
+                
+                probs = Dense(num_of_act, activation = Activation('softmax'))(l)
+                policy = Model(input=[input, advantages], output=[probs])
+                policy.compile(optimizer = RMSprop(lr), loss = custom_loss)
+
+                model = Model(input=[input], output=[probs])
+
             elif(t == "DQN"):
+                conv1 = Conv2D(2,8, strides = (4,4), activation = Activation("relu"))
+                bn1 = BatchNormalization()
+                conv2 = Conv2D(2,4, strides = (2,2), activation = Activation("relu"))
+                bn2 = BatchNormalization()
+                flat_feature = Flatten()
+                fc1 = Dense(100, activation = Activation('relu'))
+                bn3 = BatchNormalization()
                 outputs = Dense(num_of_act)
 
-            model = Sequential()
-            model.add(conv1)
-            if not test and dropout > 0:
-                model.add(Dropout(dropout))
-            if(batch_norm):
-                model.add(bn1)
-            model.add(conv2)
-            if not test and dropout > 0:
-                model.add(Dropout(dropout))
-            if(batch_norm):
-                model.add(bn2)
-            model.add(flat_feature)
-            model.add(fc1)
-            if not test and dropout > 0:
-                model.add(Dropout(dropout))
-            if(batch_norm):
-                model.add(bn3)
-            model.add(outputs)
-
-            if(t == "PG"):
-                model.compile(optimizer = RMSprop(lr), loss = categorical_crossentropy)
-            elif(t == "DQN"):
+                model = Sequential()
+                model.add(conv1)
+                if not test and dropout > 0:
+                    model.add(Dropout(dropout))
+                if(batch_norm):
+                    model.add(bn1)
+                model.add(conv2)
+                if not test and dropout > 0:
+                    model.add(Dropout(dropout))
+                if(batch_norm):
+                    model.add(bn2)
+                model.add(flat_feature)
+                model.add(fc1)
+                if not test and dropout > 0:
+                    model.add(Dropout(dropout))
+                if(batch_norm):
+                    model.add(bn3)
+                model.add(outputs)
                 model.compile(optimizer = RMSprop(lr), loss ="mse")
-            model.build([None, *self.input_size])
+                model.build([None, *self.input_size])
         elif inp == "vector":            
             model = Sequential()
             for i in vector_dims[1:]:
@@ -86,13 +109,14 @@ class Solver:
             model.add(outputs)
 
             if(t == "PG"):
-                model.compile(optimizer = RMSprop(lr), loss = categorical_crossentropy)
+                model.compile(optimizer = RMSprop(lr), loss =categorical_crossentropy)
             elif(t == "DQN"):
                 model.compile(optimizer = RMSprop(lr), loss ="mse")
             
             model.build([None, vector_dims[0]])
 
         print(model.summary())
+        self.policy = policy
         self.model = model
     
     def _get_weights(self):
@@ -101,13 +125,13 @@ class Solver:
     def _set_weights(self, new_weights):
         self.model.set_weights(new_weights)
 
-    def fit(self, states, targets, epochs):
-        self.model.fit(states, targets, epochs = epochs, verbose=0)
+    def fit(self, states, advantages, targets, epochs, batch_size):
+        self.policy.fit([states, advantages], targets, epochs = epochs, verbose=0)
 
     def predict(self, states):
         return self.model.predict(states)
 
-    def next_move(self, state, epsilon):
+    def next_move(self, state, epsilon, doPrint = False):
         rand = False
         next_move = -1
         certainties = -1
@@ -118,9 +142,10 @@ class Solver:
             #certainties = self.predict(np.expand_dims(state,0))
                     
             certainties = self.predict(np.expand_dims(state,0))
-            next_move = np.argmax(certainties)
+            next_move = np.random.choice(np.arange(self.num_of_act), p = certainties[0])
 
-        #print("Next move is chosen. Move random = {}, action selected = {} with actions certainties {}".format(rand, next_move, certainties), end ='/r')
+        if(doPrint):
+            print("Next move is chosen. Move random = {}, action selected = {} with actions certainties {}".format(rand, next_move, certainties))
         return next_move
 
     def load_weights(self, path):

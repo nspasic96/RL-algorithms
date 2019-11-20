@@ -1,3 +1,4 @@
+from matplotlib import pyplot as plt
 import random
 import gym
 import numpy as np
@@ -52,28 +53,33 @@ def transformState(state):
     cropped = greyResized[offset[0]:-offset[1],:]
     final = np.expand_dims(cropped,2)
 
+    final[np.abs(final - 0.32680196) < 1e-3] = 0 # erase background
+    final[np.abs(final - 0.9254902) < 1e-3] = 0 # erase background
+    final[final != 0] = 1 # set paddles and ball to 1
+    
     #viewer = ImageViewer(np.squeeze(final[:,:],2))
     #viewer.show() 
     return final
 
 def transformState2(state):
     shapeToResize = [110, 84]
-    
+
+    #img = Image.fromarray(state, mode="RGB")
+    #img.save("slika.png")
     grey = rgb2grey(state)
     greyResized = resize(grey, shapeToResize)
     offset = [12,8]
     final = greyResized[offset[0]:-offset[1],:]
+    
+    final[np.abs(final - 0.32680196) < 1e-3] = 0 # erase background
+    final[np.abs(final - 0.9254902) < 1e-3] = 0 # erase background
+    final[final != 0] = 1 # set paddles and ball to 1
+    
     #hist = np.histogram(final)
     #print(hist)
-    #final[final == 0.32680196] = 0 # erase background
-    #final[final == 0.9254902] = 0 # erase background
-    #final[final != 0] = 1 # set paddles and ball to 1
-    #print(np.min(final))
-    #print(np.max(final))
+    #plt.imshow(final, cmap='gray', vmin=0, vmax=1)
+    #plt.show()
 
-    #viewer = ImageViewer(final)
-    #viewer.show() 
-    
     return final
 
 def discountAndNormalize(rewards,GAMMA,normalize = False):

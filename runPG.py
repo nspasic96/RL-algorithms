@@ -18,10 +18,9 @@ from utils import *
 from solvers import Solver
 from keras.callbacks import Callback
 import argparse
-
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--ENV_NAME', default = "SpaceInvaders-v0")
+parser.add_argument('--ENV_NAME', default = "Pong-v0")
 parser.add_argument('--inp', default = "vector")
 parser.add_argument('--BATCH_SIZE', default = 32)
 parser.add_argument('--LEARNING_RATE', default = 0.0003)
@@ -44,7 +43,6 @@ args = parser.parse_args()
 ENV_NAME = args.ENV_NAME
 
 BATCH_SIZE = int(args.BATCH_SIZE)
-print(type(BATCH_SIZE))
 LEARNING_RATE = float(args.LEARNING_RATE)
 EXPLORATION_MAX = float(args.EXPLORATION_MAX)
 EXPLORATION_MIN = float(args.EXPLORATION_MIN)
@@ -67,7 +65,10 @@ LOAD_PRETRAINED = args.LOAD_PRETRAINED
 #LOAD_PRETRAINED = r"C:\SpaceInvadors\env_SpaceInvaders-v0_dqn_batch_size=32_apply_steps=11000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_150000.h5"
 
 if inp == "picture":
-    INPUT_SIZE = [90,84, 1]#JUST OBSERVE DIFFERENCE IMAGE(CURRENT AND PREVIOUS STEP) TODO: IMPEMENT SUPPORT FOR LONGER HISTORY
+    if(STATE_BUFFER_SIZE > 2):
+        INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
+    else:
+        INPUT_SIZE = [90,84, 1]#JUST OBSERVE DIFFERENCE IMAGE(CURRENT AND PREVIOUS STEP) TODO: IMPEMENT SUPPORT FOR LONGER HISTORY
     LAYERS = None
 elif inp == "vector":
     STATES_DESC = 128
@@ -93,15 +94,15 @@ def writeParams(path):
 
 def game(path):
     env = gym.make(ENV_NAME)
-    print( env.unwrapped.get_action_meanings())
     gameScores = []
 
     #Tensorflow initializations
     init = tf.global_variables_initializer()
     s = tf.placeholder(dtype = tf.float32)
     rew = tf.placeholder(dtype = tf.float32)
-    histData1 = tf.placeholder(dtype = tf.int64)
-    histData2 = tf.placeholder(dtype = tf.int64)
+    histData1 = tf.placeholder(dtype = tf.float32)
+    histData2 = tf.placeholder(dtype = tf.float32)
+
     gameScoreMean = tf.reduce_mean(s)
     
     pgs = Solver("PG", NUMBER_OF_ACTIONS, LEARNING_RATE,BATCH_NORM,STATE_BUFFER_SIZE,inp=inp, vector_dims=LAYERS)
@@ -132,9 +133,9 @@ def game(path):
 
     summaries = tf.summary.merge_all()
 
-
     cTargets = []
     cInputs = []
+    cAdvantages = []
     
     epsilon = EXPLORATION_MAX
     
@@ -146,7 +147,7 @@ def game(path):
         writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
         step = 0
         while True:
-            #Episod starts here
+            #Episode starts here
             e+=1
 
             rewards = []
@@ -155,14 +156,14 @@ def game(path):
 
             stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
             for _ in range(STATE_BUFFER_SIZE):
-                stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:-1]]))
+                stateBuffer.append(np.zeros(shape=[*INPUT_SIZE[0:-1],1]))
 
             terminal = False
 
             state = env.reset()
 
             if(inp == "picture"):
-                state = processState2(state, stateBuffer, STATE_BUFFER_SIZE)
+                state = processState(state, stateBuffer, STATE_BUFFER_SIZE)
                 
                 #img = Image.fromarray(state, mode="RGB")
                 #img.show()
@@ -176,14 +177,12 @@ def game(path):
                 
                 if(e % EPISODES_UPDATE == 1):
                     env.render()
-
-                action = pgs.next_move(state, epsilon)
-                
-                action += 2
+                    action = pgs.next_move(state, epsilon, True)
+                else:
+                    action = pgs.next_move(state, epsilon, False)    
+                action += 2 #this change is just for emulator for pong
 
                 state_next, reward, terminal, _ = env.step(action)
-                #img = Image.fromarray(state_next, mode="RGB")
-                #img.show()
 
                 action -= 2
                 
@@ -192,9 +191,9 @@ def game(path):
                 actions.append(action)
 
                 if(inp == "picture"):
-                    state_next = processState2(state_next, stateBuffer, STATE_BUFFER_SIZE)
-                
-                memory.append(state)
+                    state_next = processState(state_next, stateBuffer, STATE_BUFFER_SIZE)
+            
+                memory.append(np.copy(state))
 
                 cumulative_reward += reward
                 state = state_next
@@ -203,7 +202,11 @@ def game(path):
                     epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,step,STEPS_TO_DECREASE)
                 else:
                     epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,e,STEPS_TO_DECREASE)
-                epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
+                
+                if(e % EPISODES_UPDATE == 1):
+                    epsilon = EXPLORATION_MIN
+                else:
+                    epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
 
                 if step % SAVE_STEPS == 0:
                     st = time.time()
@@ -215,30 +218,37 @@ def game(path):
 
             actionsOneHot = np.zeros(shape=(len(actions),NUMBER_OF_ACTIONS))
             for idx,i in enumerate(actions):
-                actionsOneHot[idx,i] = -1
+                actionsOneHot[idx,1-i] = 1
             
-            targets = discRewards*actionsOneHot
+            targets = actionsOneHot
+            print(targets.shape)
+            print(actionsOneHot.shape)
+            print(discRewards.shape)
             
             inputs = np.reshape(memory, [-1, *INPUT_SIZE])
 
             if(e % EPISODES_UPDATE == 0):
                 ttInputs = cInputs[0]
                 ttTargets = cTargets[0]
+                ttAdvantages = cAdvantages[0] 
                 n = len(cInputs)
                 for i in range(1,n):
                     ttInputs = np.vstack((ttInputs, cInputs[i]))
                     ttTargets = np.vstack((ttTargets, cTargets[i]))
+                    ttAdvantages = np.vstack((ttAdvantages, cAdvantages[i]))
 
 
                 #ks=TensorBoard(log_dir="train/{}".format(time.time()), histogram_freq=1, write_graph=True, write_grads=False, batch_size=BATCH_SIZE)
                 cb = MyCallback()
                 
-                pgs.model.fit(ttInputs, ttTargets, epochs=1, batch_size=128)#, callbacks=[cb])
+                pgs.policy.fit([ttInputs, ttAdvantages], ttTargets, epochs=1, batch_size=128)#, callbacks=[cb])
                 cInputs = []
                 cTargets = []
+                cAdvantages = []
             else:
-                cInputs.append(inputs)
-                cTargets.append(targets)                
+                cInputs.append(np.copy(inputs))
+                cTargets.append(np.copy(targets))
+                cAdvantages.append(np.copy(discRewards))                
 
             elapsed = time.time() - start
             gameScores.append(cumulative_reward)
