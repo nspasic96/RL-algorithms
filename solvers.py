@@ -13,7 +13,7 @@ import os
 import tensorflow as tf
 import time 
 from keras.models import load_model, Model, clone_model
-from keras.losses import categorical_crossentropy
+from keras.losses import categorical_crossentropy, mean_squared_error
 import keras.backend as K
 
 class Solver:
@@ -44,14 +44,14 @@ class Solver:
             
                 input = Input(shape=(self.input_size))
                 advantages = Input(shape=[1])
-                l = Conv2D(16,8, strides = (4,4), activation = Activation("relu"))(input)
+                l = Conv2D(8,4, strides = (2,2), activation = Activation("relu"))(input)
                 if(batch_norm):
                     l = BatchNormalization()(l)
-                l = Conv2D(32,4, strides = (2,2), activation = Activation("relu"))(l)
+                l = Conv2D(16,4, strides = (2,2), activation = Activation("relu"))(l)
                 if(batch_norm):
                     l = BatchNormalization()(l)
                 l = Flatten()(l)
-                l = Dense(100, activation = Activation('relu'))(l)
+                l = Dense(20, activation = Activation('relu'))(l)
                 if(batch_norm):
                     l = BatchNormalization()(l)
                 
@@ -62,35 +62,31 @@ class Solver:
                 model = Model(input=[input], output=[probs])
 
             elif(t == "DQN"):
-                conv1 = Conv2D(2,8, strides = (4,4), activation = Activation("relu"))
-                bn1 = BatchNormalization()
-                conv2 = Conv2D(2,4, strides = (2,2), activation = Activation("relu"))
-                bn2 = BatchNormalization()
-                flat_feature = Flatten()
-                fc1 = Dense(100, activation = Activation('relu'))
-                bn3 = BatchNormalization()
-                outputs = Dense(num_of_act)
 
-                model = Sequential()
-                model.add(conv1)
+                input = Input(shape=(self.input_size))
+
+                l = Conv2D(8,8, strides = (4,4), activation = Activation("relu"))(input)
                 if not test and dropout > 0:
-                    model.add(Dropout(dropout))
+                    l = Dropout(dropout)(l)                           
                 if(batch_norm):
-                    model.add(bn1)
-                model.add(conv2)
+                    l = BatchNormalization()(l)
+                l = Conv2D(8,4, strides = (2,2), activation = Activation("relu"))(l)
                 if not test and dropout > 0:
-                    model.add(Dropout(dropout))
+                    l = Dropout(dropout)(l)                
                 if(batch_norm):
-                    model.add(bn2)
-                model.add(flat_feature)
-                model.add(fc1)
+                    l = BatchNormalization()(l)
+                l = Flatten()(l)
+                #l = Dense(100, activation = Activation('relu'))(l)
+                #if(batch_norm):
+                #    l = BatchNormalization()(l)
+                
+                qVals = Dense(num_of_act)(l)
                 if not test and dropout > 0:
-                    model.add(Dropout(dropout))
-                if(batch_norm):
-                    model.add(bn3)
-                model.add(outputs)
-                model.compile(optimizer = RMSprop(lr), loss ="mse")
-                model.build([None, *self.input_size])
+                    l = Dropout(dropout)(l)                
+                
+                model = Model(input=[input], output=[qVals])
+                model.compile(optimizer = RMSprop(lr), loss = mean_squared_error)
+                policy = None
         elif inp == "vector":            
             model = Sequential()
             for i in vector_dims[1:]:
@@ -126,11 +122,14 @@ class Solver:
         self.model.set_weights(new_weights)
 
     def fit(self, states, advantages, targets, epochs, batch_size):
-        self.policy.fit([states, advantages], targets, epochs = epochs, verbose=0)
-
+        if self.policy is None:
+            self.model.fit(states, targets, epochs = epochs, verbose=0)#this is for DQN
+        else:
+            self.policy.fit([states, advantages], targets, epochs = epochs, verbose=0)#this is for PG
     def predict(self, states):
         return self.model.predict(states)
 
+    
     def next_move(self, state, epsilon, doPrint = False):
         rand = False
         next_move = -1
@@ -142,7 +141,11 @@ class Solver:
             #certainties = self.predict(np.expand_dims(state,0))
                     
             certainties = self.predict(np.expand_dims(state,0))
-            next_move = np.random.choice(np.arange(self.num_of_act), p = certainties[0])
+            if self.policy is None:
+                next_move = np.argmax(certainties[0])
+            else:
+                #next_move = np.argmax(certainties[0])
+                next_move = np.random.choice(np.arange(self.num_of_act), p = certainties[0])
 
         if(doPrint):
             print("Next move is chosen. Move random = {}, action selected = {} with actions certainties {}".format(rand, next_move, certainties))

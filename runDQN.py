@@ -20,47 +20,42 @@ import argparse
 
 parser = argparse.ArgumentParser(description='Process game parameters.')
 
-parser.add_argument('--ENV_NAME', default = "SpaceInvaders-v0")
-parser.add_argument('--inp', default = "vector")
+parser.add_argument('--ENV_NAME', default = "Pong-v0")
+parser.add_argument('--inp', default = "picture")
 parser.add_argument('--BATCH_SIZE', default = 32)
 parser.add_argument('--LEARNING_RATE', default = 0.0003)
 parser.add_argument('--EXPLORATION_MAX', default = 1)
-parser.add_argument('--EXPLORATION_MIN', default = 0.01)
+parser.add_argument('--EXPLORATION_MIN', default = 0.1)
 parser.add_argument('--STEPS_TO_DECREASE', default = 1000000)
-parser.add_argument('--DECRESE_EVERY_STEP', default = 0)
+parser.add_argument('--DECRESE_EVERY_STEP', default = 1)
 parser.add_argument('--SAVE_STEPS', default = 50000)
 parser.add_argument('--GAMMA', default = 0.95)
 parser.add_argument('--MEMORY_SIZE', default = 1000000)
-parser.add_argument('--APPLY_STEPS', default = 11000)
-parser.add_argument('--EPISODES_UPDATE', default = 10)
+parser.add_argument('--APPLY_STEPS', default = 10000)
 parser.add_argument('--STATE_BUFFER_SIZE', default = 4)
 parser.add_argument('--BATCH_NORM', default = 0)
-parser.add_argument('--NUMBER_OF_ACTIONS', default = 6)
+parser.add_argument('--NUMBER_OF_ACTIONS', default = 2)
 parser.add_argument('--RUNNING_MEAN_ACC', default = 50)
 parser.add_argument('--LOAD_PRETRAINED', default = None)
-parser.add_argument('--NORMALIZE_REWARDS', default = 0)
 
 args = parser.parse_args()
 
-ENV_NAME = args.ENV_NAME
-
-BATCH_SIZE = args.BATCH_SIZE
-print(type(BATCH_SIZE))
-LEARNING_RATE = args.LEARNING_RATE
-EXPLORATION_MAX = args.EXPLORATION_MAX
-EXPLORATION_MIN = args.EXPLORATION_MIN
-STEPS_TO_DECREASE = args.STEPS_TO_DECREASE
-DECRESE_EVERY_STEP = bool(int(args.DECRESE_EVERY_STEP))
-SAVE_STEPS = args.SAVE_STEPS
-NORMALIZE_REWARDS = bool(int(args.NORMALIZE_REWARDS))
-
-GAMMA = args.GAMMA
-MEMORY_SIZE = args.MEMORY_SIZE
-APPLY_STEPS = args.APPLY_STEPS
-EPISODES_UPDATE = args.EPISODES_UPDATE
-
 inp = args.inp
-STATE_BUFFER_SIZE = args.STATE_BUFFER_SIZE
+ENV_NAME = args.ENV_NAME
+BATCH_SIZE = int(args.BATCH_SIZE)
+LEARNING_RATE = float(args.LEARNING_RATE)
+EXPLORATION_MAX = float(args.EXPLORATION_MAX)
+EXPLORATION_MIN = float(args.EXPLORATION_MIN)
+STEPS_TO_DECREASE = int(args.STEPS_TO_DECREASE)
+DECRESE_EVERY_STEP = bool(int(args.DECRESE_EVERY_STEP))
+SAVE_STEPS = int(args.SAVE_STEPS)
+GAMMA = float(args.GAMMA)
+MEMORY_SIZE = int(args.MEMORY_SIZE)
+APPLY_STEPS = int(args.APPLY_STEPS)
+STATE_BUFFER_SIZE = int(args.STATE_BUFFER_SIZE)
+BATCH_NORM = bool(int(args.BATCH_NORM))
+NUMBER_OF_ACTIONS = int(args.NUMBER_OF_ACTIONS)
+RUNNING_MEAN_ACC = int(args.RUNNING_MEAN_ACC)
 
 if inp == "picture":
     INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
@@ -73,9 +68,6 @@ elif inp == "vector":
         INPUT_SIZE = [STATES_DESC, STATE_BUFFER_SIZE]
     LAYERS = [STATES_DESC, 50, 20]
 
-BATCH_NORM = bool(int(args.BATCH_NORM))
-NUMBER_OF_ACTIONS = args.NUMBER_OF_ACTIONS
-RUNNING_MEAN_ACC = args.RUNNING_MEAN_ACC
 
 LOAD_PRETRAINED = args.LOAD_PRETRAINED
 #LOAD_PRETRAINED = r"C:\SpaceInvadors\env_SpaceInvaders-v0_dqn_batch_size=32_apply_steps=11000_state_bufS=4_batch_norm_False_numberAc_6\model_weights_150000.h5"
@@ -96,7 +88,7 @@ def writeParams(path):
         f.write("BATCH_NORM : {}\n".format(BATCH_NORM))
 
 def game(path):
-    print("Trainininininng")
+
     env = gym.make(ENV_NAME)
     gameScores = []
 
@@ -121,8 +113,8 @@ def game(path):
         sess.run(init)
         writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
 
-        q_network = Solver() #sa najsvezijim tezinama
-        target_network = Solver()#sa poslednjim zamrznutim tezinama
+        q_network = Solver("DQN", NUMBER_OF_ACTIONS, LEARNING_RATE, BATCH_NORM, STATE_BUFFER_SIZE) #with current weights
+        target_network = Solver("DQN", NUMBER_OF_ACTIONS, LEARNING_RATE, BATCH_NORM, STATE_BUFFER_SIZE)#with last frozen weights
         target_network._set_weights(q_network._get_weights())
         
         if LOAD_PRETRAINED is not None:
@@ -140,7 +132,7 @@ def game(path):
             terminal = False
             state = env.reset()
 
-            state = processState(state, stateBuffer)
+            state = processState(state, stateBuffer, STATE_BUFFER_SIZE)
 
             cumulative_reward = 0
             max_reached = 0
@@ -148,35 +140,39 @@ def game(path):
             start = time.time()
             while(not terminal):
                 step += 1
-                env.render()
-                action = q_network.next_move(state, epsilon)
-                state_next, reward, terminal, _ = env.step(action)
+                if(e % 10 == 1):
+                    env.render()
+                    action = q_network.next_move(state, epsilon, True)
+                else:
+                    action = q_network.next_move(state, epsilon, False)   
 
-                state_next = processState(state_next, stateBuffer)
+                action += 2 #just for pong
+                state_next, reward, terminal, _ = env.step(action)
+                action -= 2
+
+                state_next = processState(state_next, stateBuffer, STATE_BUFFER_SIZE)
                 memory.append((state, action, reward, state_next, terminal))
 
                 if(len(memory) >= BATCH_SIZE):
                     idxs = np.random.choice(len(memory), BATCH_SIZE, replace=False)
-                    states, targets = get_batch_from_memory(idxs, memory, target_network, q_network)
-                    q_network.fit(states, targets, epochs = 1)
+                    states, targets = get_batch_from_memory(idxs, memory, target_network, q_network, GAMMA)
+                    q_network.fit(states, None, targets, epochs = 1, batch_size=BATCH_SIZE)
 
                     if step % APPLY_STEPS == 0:
-                        print("\n\nWeights copying!!!\n\n")
                         target_network._set_weights(q_network._get_weights())
 
                 cumulative_reward += reward
                 state = state_next
 
                 if DECRESE_EVERY_STEP:
-                    epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,step)
+                    epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,step,STEPS_TO_DECREASE)
                 else:
-                    epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,e)
+                    epsilon = newExploration(EXPLORATION_MIN,EXPLORATION_MAX,e,STEPS_TO_DECREASE)
+                
                 epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
                 
                 if step % SAVE_STEPS == 0:
-                    st = time.time()
-                    q_network.save_weights(step)
-                    el = time.time() - st
+                    q_network.save_weights(step,path)
 
             elapsed = time.time() - start
             gameScores.append(cumulative_reward)
@@ -184,9 +180,7 @@ def game(path):
             if(cumulative_reward > curr_maxx):
                 curr_maxx = cumulative_reward
                 max_reached += 1
-                st = time.time()
-                q_network.save_weights_for_max(e,curr_maxx)
-                el = time.time() - st
+                q_network.save_weights_for_max(e,curr_maxx,path)
 
             start = 0
             if(e >= RUNNING_MEAN_ACC):
@@ -195,8 +189,8 @@ def game(path):
             summary = sess.run(summaries, feed_dict={s : gameScores[start:-1], rew : cumulative_reward})
             writer.add_summary(summary, e)
                             
-            print("Episode {} over(total {} steps until now) in {}s, total reward is {} and exploration rate is now {}. \n Mean score is {}.".format(e,step, 
-                elapsed, cumulative_reward, epsilon, np.mean(gameScores)), end="\r")
+            print("Episode {} over(total {} steps until now) in {}s.\n Total reward is {} and exploration rate is now {}.\n Mean score in last {} episodes is {}.".format(e,step, 
+                elapsed, cumulative_reward, epsilon, len(gameScores)-start , np.mean(gameScores[start:-1])))
 
 if __name__ == "__main__":
 
