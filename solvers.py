@@ -76,9 +76,9 @@ class Solver:
                 if(batch_norm):
                     l = BatchNormalization()(l)
                 l = Flatten()(l)
-                #l = Dense(100, activation = Activation('relu'))(l)
-                #if(batch_norm):
-                #    l = BatchNormalization()(l)
+                l = Dense(100, activation = Activation('relu'))(l)
+                if(batch_norm):
+                    l = BatchNormalization()(l)
                 
                 qVals = Dense(num_of_act)(l)
                 if not test and dropout > 0:
@@ -121,7 +121,7 @@ class Solver:
     def _set_weights(self, new_weights):
         self.model.set_weights(new_weights)
 
-    def fit(self, states, advantages, targets, epochs, batch_size):
+    def fit(self, states, advantages, targets, epochs):
         if self.policy is None:
             self.model.fit(states, targets, epochs = epochs, verbose=0)#this is for DQN
         else:

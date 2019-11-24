@@ -203,7 +203,7 @@ def game(path):
                 #discount and normalize rewards for last EPISODES_UPDATE episodes
                 ttAdvantages = discountAndNormalize(ttAdvantages,GAMMA,NORMALIZE_REWARDS)
                 
-                pgs.policy.fit([ttInputs, ttAdvantages], ttTargets, epochs=1, batch_size=128)
+                pgs.policy.fit([ttInputs, ttAdvantages], ttTargets, epochs=1)
 
                 cInputs = []
                 cTargets = []

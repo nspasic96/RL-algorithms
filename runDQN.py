@@ -22,16 +22,16 @@ parser = argparse.ArgumentParser(description='Process game parameters.')
 
 parser.add_argument('--ENV_NAME', default = "Pong-v0")
 parser.add_argument('--inp', default = "picture")
-parser.add_argument('--BATCH_SIZE', default = 32)
+parser.add_argument('--TRAIN_ON_SIZE', default = 10000)
 parser.add_argument('--LEARNING_RATE', default = 0.0003)
 parser.add_argument('--EXPLORATION_MAX', default = 1)
 parser.add_argument('--EXPLORATION_MIN', default = 0.1)
 parser.add_argument('--STEPS_TO_DECREASE', default = 1000000)
 parser.add_argument('--DECRESE_EVERY_STEP', default = 1)
-parser.add_argument('--SAVE_STEPS', default = 50000)
+parser.add_argument('--SAVE_STEPS', default = 100000)
 parser.add_argument('--GAMMA', default = 0.95)
 parser.add_argument('--MEMORY_SIZE', default = 1000000)
-parser.add_argument('--APPLY_STEPS', default = 10000)
+parser.add_argument('--APPLY_EPISODES', default = 10)
 parser.add_argument('--STATE_BUFFER_SIZE', default = 4)
 parser.add_argument('--BATCH_NORM', default = 0)
 parser.add_argument('--NUMBER_OF_ACTIONS', default = 2)
@@ -42,7 +42,7 @@ args = parser.parse_args()
 
 inp = args.inp
 ENV_NAME = args.ENV_NAME
-BATCH_SIZE = int(args.BATCH_SIZE)
+TRAIN_ON_SIZE = int(args.TRAIN_ON_SIZE)
 LEARNING_RATE = float(args.LEARNING_RATE)
 EXPLORATION_MAX = float(args.EXPLORATION_MAX)
 EXPLORATION_MIN = float(args.EXPLORATION_MIN)
@@ -51,7 +51,7 @@ DECRESE_EVERY_STEP = bool(int(args.DECRESE_EVERY_STEP))
 SAVE_STEPS = int(args.SAVE_STEPS)
 GAMMA = float(args.GAMMA)
 MEMORY_SIZE = int(args.MEMORY_SIZE)
-APPLY_STEPS = int(args.APPLY_STEPS)
+APPLY_EPISODES = int(args.APPLY_EPISODES)
 STATE_BUFFER_SIZE = int(args.STATE_BUFFER_SIZE)
 BATCH_NORM = bool(int(args.BATCH_NORM))
 NUMBER_OF_ACTIONS = int(args.NUMBER_OF_ACTIONS)
@@ -77,8 +77,8 @@ def writeParams(path):
         f.write("GAMMA : {}\n".format(GAMMA))
         f.write("LEARNING_RATE : {}\n".format(LEARNING_RATE))
         f.write("MEMORY_SIZE : {}\n".format(MEMORY_SIZE))
-        f.write("BATCH_SIZE : {}\n".format(BATCH_SIZE))
-        f.write("APPLY_STEPS : {}\n".format(APPLY_STEPS))
+        f.write("TRAIN_ON_SIZE : {}\n".format(TRAIN_ON_SIZE))
+        f.write("APPLY_EPISODES : {}\n".format(APPLY_EPISODES))
         f.write("EXPLORATION_MAX : {}\n".format(EXPLORATION_MAX))
         f.write("EXPLORATION_MIN : {}\n".format(EXPLORATION_MIN))
         f.write("STEPS_TO_DECREASE : {}\n".format(STEPS_TO_DECREASE))
@@ -124,6 +124,7 @@ def game(path):
         step = 0
         #Episodes start here
         while True:
+            
             e+=1
             stateBuffer = deque(maxlen = STATE_BUFFER_SIZE)
             for _ in range(STATE_BUFFER_SIZE):
@@ -136,6 +137,14 @@ def game(path):
 
             cumulative_reward = 0
             max_reached = 0
+
+            if(len(memory) >= TRAIN_ON_SIZE):
+                idxs = np.random.choice(len(memory), TRAIN_ON_SIZE, replace=False)
+                states, targets = get_batch_from_memory(idxs, memory, target_network, q_network, GAMMA)
+                q_network.fit(states, None, targets, epochs = 1)
+
+                if e % APPLY_EPISODES == 0:
+                    target_network._set_weights(q_network._get_weights())
 
             start = time.time()
             while(not terminal):
@@ -152,15 +161,7 @@ def game(path):
 
                 state_next = processState(state_next, stateBuffer, STATE_BUFFER_SIZE)
                 memory.append((state, action, reward, state_next, terminal))
-
-                if(len(memory) >= BATCH_SIZE):
-                    idxs = np.random.choice(len(memory), BATCH_SIZE, replace=False)
-                    states, targets = get_batch_from_memory(idxs, memory, target_network, q_network, GAMMA)
-                    q_network.fit(states, None, targets, epochs = 1, batch_size=BATCH_SIZE)
-
-                    if step % APPLY_STEPS == 0:
-                        target_network._set_weights(q_network._get_weights())
-
+                
                 cumulative_reward += reward
                 state = state_next
 
@@ -188,13 +189,18 @@ def game(path):
 
             summary = sess.run(summaries, feed_dict={s : gameScores[start:-1], rew : cumulative_reward})
             writer.add_summary(summary, e)
-                            
+               
+            n = 0 
+            if start == 0:
+                 n= len(gameScores) 
+            else: 
+                n = -start-1
             print("Episode {} over(total {} steps until now) in {}s.\n Total reward is {} and exploration rate is now {}.\n Mean score in last {} episodes is {}.".format(e,step, 
-                elapsed, cumulative_reward, epsilon, len(gameScores)-start , np.mean(gameScores[start:-1])))
+                elapsed, cumulative_reward, epsilon, n, np.mean(gameScores[start:-1])))
 
 if __name__ == "__main__":
 
-    path = "./env_{}_dqn_batch_size={}_apply_steps={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(ENV_NAME,BATCH_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
+    path = "./env_{}_dqn_train_on_size={}_apply_episodes={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(ENV_NAME,TRAIN_ON_SIZE,APPLY_EPISODES,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
     if not os.path.exists(path):
         print("Creating folder")
         os.mkdir(path)
