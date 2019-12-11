@@ -4,7 +4,7 @@ import numpy as np
 from collections import deque
 from keras.models import Sequential
 from keras.layers import Input, Conv2D, Dense, Flatten, Activation, BatchNormalization, Dropout
-from keras.optimizers import RMSprop
+from keras.optimizers import RMSprop, Adam
 from skimage.io import imshow
 from skimage.color import rgb2grey
 from skimage.transform import resize
@@ -85,12 +85,12 @@ class Solver:
                     l = Dropout(dropout)(l)                
                 
                 model = Model(input=[input], output=[qVals])
-                model.compile(optimizer = RMSprop(lr), loss = mean_squared_error)
+                model.compile(optimizer = Adam(lr), loss = mean_squared_error)
                 policy = None
         elif inp == "vector":            
             model = Sequential()
             for i in vector_dims[1:]:
-                fc = Dense(i, activation = Activation('relu'), kernel_initializer='random_normal')
+                fc = Dense(i, activation = Activation('relu'))
                 model.add(fc)
                 if not test and dropout > 0:
                     model.add(Dropout(dropout))
@@ -100,14 +100,12 @@ class Solver:
             
             if(t == "PG"):
                 outputs = Dense(num_of_act, activation = Activation('softmax'))
+                model.compile(optimizer = Adam(lr), loss =categorical_crossentropy)
             elif(t == "DQN"):
                 outputs = Dense(num_of_act)
+                model.compile(optimizer = Adam(lr), loss ="mse")
+                policy = None
             model.add(outputs)
-
-            if(t == "PG"):
-                model.compile(optimizer = RMSprop(lr), loss =categorical_crossentropy)
-            elif(t == "DQN"):
-                model.compile(optimizer = RMSprop(lr), loss ="mse")
             
             model.build([None, vector_dims[0]])
 

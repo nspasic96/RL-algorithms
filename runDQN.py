@@ -8,12 +8,10 @@ from keras.optimizers import Adam, SGD, RMSprop
 from skimage.io import imshow
 from skimage.color import rgb2grey
 from skimage.transform import resize
-from skimage.viewer import ImageViewer
 import os
 import tensorflow as tf
 import time 
 from keras.models import load_model, Model, clone_model
-from keras.losses import categorical_crossentropy
 from utils import *
 from solvers import Solver
 import argparse
@@ -31,7 +29,7 @@ parser.add_argument('--DECRESE_EVERY_STEP', default = 1)
 parser.add_argument('--SAVE_STEPS', default = 100000)
 parser.add_argument('--GAMMA', default = 0.95)
 parser.add_argument('--MEMORY_SIZE', default = 1000000)
-parser.add_argument('--APPLY_EPISODES', default = 10)
+parser.add_argument('--APPLY_STEPS', default = 5000)
 parser.add_argument('--STATE_BUFFER_SIZE', default = 4)
 parser.add_argument('--BATCH_NORM', default = 0)
 parser.add_argument('--NUMBER_OF_ACTIONS', default = 2)
@@ -51,7 +49,7 @@ DECRESE_EVERY_STEP = bool(int(args.DECRESE_EVERY_STEP))
 SAVE_STEPS = int(args.SAVE_STEPS)
 GAMMA = float(args.GAMMA)
 MEMORY_SIZE = int(args.MEMORY_SIZE)
-APPLY_EPISODES = int(args.APPLY_EPISODES)
+APPLY_STEPS = int(args.APPLY_STEPS)
 STATE_BUFFER_SIZE = int(args.STATE_BUFFER_SIZE)
 BATCH_NORM = bool(int(args.BATCH_NORM))
 NUMBER_OF_ACTIONS = int(args.NUMBER_OF_ACTIONS)
@@ -61,7 +59,7 @@ if inp == "picture":
     INPUT_SIZE = [90,84,STATE_BUFFER_SIZE]
     LAYERS = None
 elif inp == "vector":
-    STATES_DESC = 4
+    STATES_DESC = 128
     if STATE_BUFFER_SIZE == 1:
         INPUT_SIZE = [STATES_DESC]  
     else:
@@ -78,7 +76,7 @@ def writeParams(path):
         f.write("LEARNING_RATE : {}\n".format(LEARNING_RATE))
         f.write("MEMORY_SIZE : {}\n".format(MEMORY_SIZE))
         f.write("TRAIN_ON_SIZE : {}\n".format(TRAIN_ON_SIZE))
-        f.write("APPLY_EPISODES : {}\n".format(APPLY_EPISODES))
+        f.write("APPLY_STEPS : {}\n".format(APPLY_STEPS))
         f.write("EXPLORATION_MAX : {}\n".format(EXPLORATION_MAX))
         f.write("EXPLORATION_MIN : {}\n".format(EXPLORATION_MIN))
         f.write("STEPS_TO_DECREASE : {}\n".format(STEPS_TO_DECREASE))
@@ -113,8 +111,8 @@ def game(path):
         sess.run(init)
         writer = tf.summary.FileWriter(path + "/train", sess.graph_def)
 
-        q_network = Solver("DQN", NUMBER_OF_ACTIONS, LEARNING_RATE, BATCH_NORM, STATE_BUFFER_SIZE) #with current weights
-        target_network = Solver("DQN", NUMBER_OF_ACTIONS, LEARNING_RATE, BATCH_NORM, STATE_BUFFER_SIZE)#with last frozen weights
+        q_network = Solver("DQN", NUMBER_OF_ACTIONS, LEARNING_RATE, BATCH_NORM, STATE_BUFFER_SIZE, inp=inp, vector_dims = LAYERS) #with current weights
+        target_network = Solver("DQN", NUMBER_OF_ACTIONS, LEARNING_RATE, BATCH_NORM, STATE_BUFFER_SIZE, inp=inp, vector_dims = LAYERS)#with last frozen weights
         target_network._set_weights(q_network._get_weights())
         
         if LOAD_PRETRAINED is not None:
@@ -133,33 +131,28 @@ def game(path):
             terminal = False
             state = env.reset()
 
-            state = processState(state, stateBuffer, STATE_BUFFER_SIZE)
+            if(inp == "picture"):
+                state = processState(state, stateBuffer, STATE_BUFFER_SIZE)
 
             cumulative_reward = 0
             max_reached = 0
-
-            if(len(memory) >= TRAIN_ON_SIZE):
-                idxs = np.random.choice(len(memory), TRAIN_ON_SIZE, replace=False)
-                states, targets = get_batch_from_memory(idxs, memory, target_network, q_network, GAMMA)
-                q_network.fit(states, None, targets, epochs = 1)
-
-                if e % APPLY_EPISODES == 0:
-                    target_network._set_weights(q_network._get_weights())
-
+                        
             start = time.time()
             while(not terminal):
                 step += 1
                 if(e % 10 == 1):
                     env.render()
-                    action = q_network.next_move(state, epsilon, True)
+                    action = target_network.next_move(state, epsilon, True)
                 else:
-                    action = q_network.next_move(state, epsilon, False)   
+                    action = target_network.next_move(state, epsilon, False)   
 
                 action += 2 #just for pong
                 state_next, reward, terminal, _ = env.step(action)
                 action -= 2
 
-                state_next = processState(state_next, stateBuffer, STATE_BUFFER_SIZE)
+                if(inp == "picture"):
+                    state_next = processState(state_next, stateBuffer, STATE_BUFFER_SIZE)
+
                 memory.append((state, action, reward, state_next, terminal))
                 
                 cumulative_reward += reward
@@ -172,6 +165,14 @@ def game(path):
                 
                 epsilon = np.clip(epsilon, EXPLORATION_MIN, EXPLORATION_MAX)
                 
+                if(len(memory) >= TRAIN_ON_SIZE):
+                    idxs = np.random.choice(len(memory), TRAIN_ON_SIZE, replace=False)
+                    states, targets = get_batch_from_memory(idxs, memory, target_network, q_network, GAMMA)
+                    q_network.fit(states, None, targets, epochs = 1)
+
+                    if e % APPLY_STEPS == 0:
+                        target_network._set_weights(q_network._get_weights())
+
                 if step % SAVE_STEPS == 0:
                     q_network.save_weights(step,path)
 
@@ -196,11 +197,11 @@ def game(path):
             else: 
                 n = -start-1
             print("Episode {} over(total {} steps until now) in {}s.\n Total reward is {} and exploration rate is now {}.\n Mean score in last {} episodes is {}.".format(e,step, 
-                elapsed, cumulative_reward, epsilon, n, np.mean(gameScores[start:-1])))
+                elapsed, cumulative_reward, epsilon, n, np.mean(gameScores[start:])))
 
 if __name__ == "__main__":
 
-    path = "./env_{}_dqn_train_on_size={}_apply_episodes={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(ENV_NAME,TRAIN_ON_SIZE,APPLY_EPISODES,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
+    path = "./env_{}_dqn_train_on_size={}_apply_steps={}_state_bufS={}_batch_norm_{}_numberAc_{}".format(ENV_NAME,TRAIN_ON_SIZE,APPLY_STEPS,STATE_BUFFER_SIZE,BATCH_NORM,NUMBER_OF_ACTIONS)
     if not os.path.exists(path):
         print("Creating folder")
         os.mkdir(path)

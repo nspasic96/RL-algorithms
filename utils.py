@@ -84,8 +84,11 @@ def get_batch_from_memory(idxs, memory, target_network, q_network, GAMMA):
         actions.append(action)
         rewards.append(reward)
         dones.append(done)
+        #if(done):
+            #print(reward)
 
     states = np.concatenate(states, axis=0)
+    #print("Input to nn is of shape {}".format(states.shape))
     state_next = np.concatenate(states_next, axis=0)
 
     outputs = target_network.predict(state_next)
@@ -93,6 +96,7 @@ def get_batch_from_memory(idxs, memory, target_network, q_network, GAMMA):
 
     for i in range(target_f.shape[0]):
         target = rewards[i] + (1-dones[i])*GAMMA*np.amax(outputs[i])
+        #print("Target is {}".format(target))
         target_f[i][actions[i]] = target
 
     targets = target_f
