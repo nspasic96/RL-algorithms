@@ -16,7 +16,7 @@ from utils import *
 from solvers import Solver
 import argparse
 
-parser = argparse.ArgumentParser(description='Process game parameters...')
+parser = argparse.ArgumentParser(description='Process game parameters.')
 
 parser.add_argument('--ENV_NAME', default = "Pong-v0")
 parser.add_argument('--inp', default = "picture")
