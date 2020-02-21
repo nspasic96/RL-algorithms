@@ -119,11 +119,11 @@ class Solver:
     def _set_weights(self, new_weights):
         self.model.set_weights(new_weights)
 
-    def fit(self, states, advantages, targets, epochs):
+    def fit(self, states, advantages, targets, epochs, batch_size = 32):
         if self.policy is None:
-            self.model.fit(states, targets, epochs = epochs, verbose=0)#this is for DQN
+            self.model.fit(states, targets, epochs = epochs, batch_size = batch_size, verbose=0)#this is for DQN
         else:
-            self.policy.fit([states, advantages], targets, epochs = epochs, verbose=0)#this is for PG
+            self.policy.fit([states, advantages], targets, epochs = epochs, batch_size = batch_size, verbose=0)#this is for PG
     def predict(self, states):
         return self.model.predict(states)
 
@@ -140,7 +140,16 @@ class Solver:
                     
             certainties = self.predict(np.expand_dims(state,0))
             if self.policy is None:
-                next_move = np.argmax(certainties[0])
+
+                a = certainties[0,0]
+                b = certainties[0,1]
+                a = np.exp(a)
+                b = np.exp(b)
+                s = a+b
+                a /= s
+                b /= s
+
+                next_move = np.random.choice(np.arange(self.num_of_act), p = [a,1-a])
             else:
                 #next_move = np.argmax(certainties[0])
                 next_move = np.random.choice(np.arange(self.num_of_act), p = certainties[0])

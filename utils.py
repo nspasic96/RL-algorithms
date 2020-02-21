@@ -16,6 +16,9 @@ import time
 from keras.models import load_model, Model, clone_model
 from keras.losses import categorical_crossentropy
 from PIL import Image
+import tensorflow_probability as tfp
+tfd = tfp.distributions 
+from scipy.stats import norm as NormalDistribution
 
 def newExploration(minn,maxx,step,STEPS_TO_DECREASE):
     return maxx + step*(minn-maxx)/STEPS_TO_DECREASE
@@ -102,3 +105,101 @@ def get_batch_from_memory(idxs, memory, target_network, q_network, GAMMA):
     targets = target_f
 
     return states, targets
+
+def addToReplyBuffer(buffer, instance, idx, max_size):
+    if(idx < max_size):
+        buffer.append(instance)
+    else:
+        idx = idx % max_size
+        buffer[idx] = instance
+        
+def prepareInputs(sampledBatch, gamma, squash):
+        
+    observations = sampledBatch[0][0]
+    if squash:
+        actionsTaken = sampledBatch[0][1][0]
+    else:
+        actionsTaken = sampledBatch[0][1][1]
+    rewards = sampledBatch[0][2]
+    stateValuesAux = sampledBatch[0][3]
+    minQs = sampledBatch[0][4]
+        
+    actionRaw = sampledBatch[0][1][1]
+    actionMeans = sampledBatch[0][1][2]
+    actionStds = sampledBatch[0][1][3]
+    
+    logPi1 = np.log(NormalDistribution(actionMeans[0, 0],actionStds[0, 0]).pdf(actionRaw[0, 0]))
+    logPi2 = np.log(NormalDistribution(actionMeans[0, 1],actionStds[0, 1]).pdf(actionRaw[0, 1]))
+    logPi3 = np.log(NormalDistribution(actionMeans[0, 2],actionStds[0, 2]).pdf(actionRaw[0, 2]))
+    logPis = [logPi1 + logPi2 + logPi3]
+    
+    for i in range(1,len(sampledBatch)):
+        
+        observations = np.vstack((observations, sampledBatch[i][0]))
+        if squash:
+            actionsTaken = np.vstack((actionsTaken, sampledBatch[i][1][0]))
+        else:
+            actionsTaken = np.vstack((actionsTaken, sampledBatch[i][1][1]))
+            
+        rewards = np.vstack((rewards, sampledBatch[i][2]))
+        stateValuesAux = np.vstack((stateValuesAux, sampledBatch[i][3]))
+        minQs = np.vstack((minQs, sampledBatch[i][4]))
+            
+        actionRaw = sampledBatch[i][1][1]
+        actionMeans = sampledBatch[i][1][2]
+        actionStds = sampledBatch[i][1][3]      
+        
+        logPi1 = np.log(NormalDistribution(actionMeans[0, 0],actionStds[0, 0]).pdf(actionRaw[0, 0]))
+        logPi2 = np.log(NormalDistribution(actionMeans[0, 1],actionStds[0, 1]).pdf(actionRaw[0, 1]))
+        logPi3 = np.log(NormalDistribution(actionMeans[0, 2],actionStds[0, 2]).pdf(actionRaw[0, 2]))
+        curr = [logPi1 + logPi2 + logPi3]
+        
+        logPis = np.vstack((logPis, curr))
+                
+    QsHat = rewards + gamma*stateValuesAux
+        
+    return observations, logPis, actionsTaken, rewards, minQs, QsHat
+
+def conjugateGradients(Ax, b, cg_iters=10):
+    """
+    Conjugate gradient algorithm
+    (see https://en.wikipedia.org/wiki/Conjugate_gradient_method)
+    """
+    x = np.zeros_like(b)
+    r = b.copy() # Note: should be 'b - Ax(x)', but for x=0, Ax(x)=0. Change if doing warm start.
+    p = r.copy()
+    r_dot_old = np.dot(r,r)
+    for _ in range(cg_iters):
+        z = Ax(p)
+        alpha = r_dot_old / (np.dot(p, z) + 1e-8)
+        x += alpha * p
+        r -= alpha * z
+        r_dot_new = np.dot(r,r)
+        p = r + (r_dot_new / r_dot_old) * p
+        r_dot_old = r_dot_new
+    return x
+
+def get_vars(scope=''):
+    return [x for x in tf.trainable_variables() if scope in x.name]
+
+def flat_concat(xs):
+    return tf.concat([tf.reshape(x,(-1,)) for x in xs], axis=0)
+
+def flat_grad(f, params):
+    return flat_concat(tf.gradients(xs=params, ys=f))
+
+def assign_params_from_flat(x, params):
+    flat_size = lambda p : int(np.prod(p.shape.as_list())) # the 'int' is important for scalars
+    splits = tf.split(x, [flat_size(p) for p in params])
+    new_params = [tf.reshape(p_new, p.shape) for p, p_new in zip(params, splits)]
+    return tf.group([tf.assign(p, p_new) for p, p_new in zip(params, new_params)])
+
+def hesian_vector_product(f, theta):
+    g = flat_grad(f, theta)
+    x = tf.placeholder(dtype=tf.float32, shape=g.shape, name="NewthonDir")
+    gTx = tf.reduce_sum(g*x)
+    Hx = flat_grad(gTx, theta)
+    return x, Hx
+    
+    
+        
