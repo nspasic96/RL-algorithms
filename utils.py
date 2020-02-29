@@ -1,24 +1,9 @@
-from matplotlib import pyplot as plt
-import random
-import gym
 import numpy as np
-from collections import deque
-from keras.models import Sequential
-from keras.layers import Input, Conv2D, Dense, Flatten, Activation, BatchNormalization, Dropout
-from keras.optimizers import Adam, SGD, RMSprop
-from skimage.io import imshow
 from skimage.color import rgb2grey
 from skimage.transform import resize
-from skimage.viewer import ImageViewer
-import os
 import tensorflow as tf
-import time 
-from keras.models import load_model, Model, clone_model
-from keras.losses import categorical_crossentropy
-from PIL import Image
-import tensorflow_probability as tfp
-tfd = tfp.distributions 
-from scipy.stats import norm as NormalDistribution
+from scipy.stats import norm as NormalDistribution #TODO:check if this should be here
+import scipy.signal as signal
 
 def newExploration(minn,maxx,step,STEPS_TO_DECREASE):
     return maxx + step*(minn-maxx)/STEPS_TO_DECREASE
@@ -45,10 +30,6 @@ def transformState(state):
     final[np.abs(final - 0.9254902) < 1e-3] = 0 # erase background
     final[final != 0] = 1 # set paddles and ball to 1
     
-    #hist = np.histogram(final)
-    #print(hist)
-    #plt.imshow(final, cmap='gray', vmin=0, vmax=1)
-    #plt.show()
     return final
 
 def discountAndNormalize(rewards,GAMMA,normalize = False):
@@ -160,7 +141,7 @@ def prepareInputs(sampledBatch, gamma, squash):
         
     return observations, logPis, actionsTaken, rewards, minQs, QsHat
 
-def conjugateGradients(Ax, b, cg_iters=10):
+def conjugate_gradients(Ax, b, cg_iters):
     """
     Conjugate gradient algorithm
     (see https://en.wikipedia.org/wiki/Conjugate_gradient_method)
@@ -196,10 +177,10 @@ def assign_params_from_flat(x, params):
 
 def hesian_vector_product(f, theta):
     g = flat_grad(f, theta)
-    x = tf.placeholder(dtype=tf.float32, shape=g.shape, name="NewthonDir")
+    x = tf.placeholder(dtype=tf.float32, shape=g.shape, name="NewtonDir")
     gTx = tf.reduce_sum(g*x)
     Hx = flat_grad(gTx, theta)
-    return x, Hx
-    
-    
-        
+    return x, Hx     
+
+def disount_cumsum(x, discount):
+    return signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
