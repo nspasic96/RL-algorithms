@@ -3,11 +3,11 @@ import gym
 import numpy as np
 import tensorflow as tf
 import time
+import wandb
 
 import utils
 from networks import StateValueNetwork, PolicyNetworkDiscrete
 from GAEBuffer import GAEBuffer
-
 
 parser = argparse.ArgumentParser(description='TRPO')
 
@@ -15,9 +15,9 @@ parser.add_argument('--gym-id', type=str, default="Pong-ram-v0",
                    help='the id of the gym environment')
 parser.add_argument('--seed', type=int, default=0,
                    help='seed of the experiment')
-parser.add_argument('--epochs', type=int, default=50,
+parser.add_argument('--epochs', type=int, default=1000,
                    help="epochs to train")
-parser.add_argument('--epoch_len', type=int, default=4000,
+parser.add_argument('--epoch_len', type=int, default=10000,
                    help="length of one epoch")
 parser.add_argument('--gamma', type=float, default=0.99,
                    help='the discount factor gamma')
@@ -25,7 +25,7 @@ parser.add_argument('--delta', type=float, default=0.01,
                    help='max KL distance between two successive distributions')
 parser.add_argument('--learning_rate_state_value', type=float, default=1e-3,
                    help='the learning rate of the optimizer of state-value function')
-parser.add_argument('--state-value-network-updates', type=int, default=80,
+parser.add_argument('--state_value_network_updates', type=int, default=80,
                    help="number of updates for state-value network")
 parser.add_argument('--damping_coef', type=float, default=0.1,
                    help='damping coef')
@@ -37,9 +37,25 @@ parser.add_argument('--alpha', type=float, default=0.8,
                    help="defult step size in line serach")
 parser.add_argument('--lambd', type=float, default=0.97,
                    help='lambda for GAE-Lambda')
-parser.add_argument('--max_episode_len', type=int, default=1000,
+parser.add_argument('--max_episode_len', type=int, default=5000,
                    help="max length of one episode")
 args = parser.parse_args()
+
+wandb.init(project="trust-region-policy-optimization")
+wandb.config.gym_id = args.gym_id
+wandb.config.seed = args.seed
+wandb.config.epochs = args.epochs
+wandb.config.epoch_len = args.epoch_len
+wandb.config.gamma = args.gamma
+wandb.config.delta = args.delta
+wandb.config.state_value_network_updates = args.state_value_network_updates
+wandb.config.learning_rate_state_value = args.learning_rate_state_value
+wandb.config.damping_coef = args.damping_coef
+wandb.config.cg_iters = args.cg_iters
+wandb.config.max_iters_line_search = args.max_iters_line_search
+wandb.config.alpha = args.alpha
+wandb.config.lambd = args.lambd
+wandb.config.max_episode_len = args.max_episode_len
 
 if not args.seed:
     args.seed = int(time.time())
@@ -48,7 +64,8 @@ sess = tf.Session()
 env = gym.make(args.gym_id)
 
 inputLength = env.observation_space.shape[0]
-outputLength = env.action_space.n
+#outputLength = env.action_space.n
+outputLength = 2
 
 buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, outputLength)
 
@@ -81,16 +98,19 @@ sess.run([init,init2])
 #algorithm
 for e in range(args.epochs):
     
-    obs = env.reset()
+    obs, epLen, epRet = env.reset(), 0, 0
     
     for l in range(args.epoch_len):
         
-        env.render()
+        #env.render()
 
         sampledAction, logProbSampledAction, logProbsAll = policy.getSampledActions(np.expand_dims(obs, 0))    
         predictedV = V.forward(np.expand_dims(obs, 0))
         
-        nextObs, reward, terminal, _ = env.step(sampledAction[0])  
+        #nextObs, reward, terminal, _ = env.step(sampledAction[0])  
+        nextObs, reward, terminal, _ = env.step(sampledAction[0]+2)  
+        epLen += 1
+        epRet += reward
 
         buffer.add(obs, sampledAction[0], predictedV, logProbSampledAction, logProbsAll, reward)
         obs = nextObs
@@ -101,7 +121,9 @@ for e in range(args.epochs):
                 print("Cutting path. Either max episode length steps are done in current episode or epoch has finished")
             val = 0 if terminal else V.forward(np.expand_dims(obs, 0))
             buffer.finishPath(val)
-            obs = env.reset()      
+            if terminal:
+                wandb.log({'Total reward': epRet, 'Episode length':epLen})
+            obs, epLen, epRet = env.reset(), 0, 0
         
     #update policy and update state-value(multiple times) after that
     observations, actions, advEst, sampledLogProb, allLogProbs, returns = buffer.get()
@@ -123,6 +145,8 @@ for e in range(args.epochs):
     
     oldParams = sess.run(getPolicyParams)
     
+    kl = 0
+    
     for j in range(args.max_iters_line_search):
         step = args.alpha**j
         
@@ -131,8 +155,8 @@ for e in range(args.epochs):
         kl, LlossNew =  sess.run([KLcontraint, Lloss],  feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb, logProbsAllPh : allLogProbs})#same as L function inputs plus
     
         if (kl <= args.delta and LlossNew <= LlossOld):
-            L_loss_old = LlossNew
-            old_params = oldParams - coef*newDir*step
+            LlossOld = LlossNew
+            oldParams = oldParams - coef*newDir*step
             break
         
         if(j == args.max_iters_line_search - 1):
@@ -140,4 +164,10 @@ for e in range(args.epochs):
             print("Line search didn't find step size that satisfies KL constraint")
     
     for j in range(args.state_value_network_updates):
-        sess.run(svfOptimizationStep, feed_dict={obsPh:observations, returnsPh : returns})
+        sess.run(svfOptimizationStep, feed_dict={obsPh : observations, returnsPh : returns})
+    
+    SVLoss = sess.run(stateValueLoss, feed_dict={obsPh : observations, returnsPh : returns})
+    wandb.log({'Value function loss': SVLoss, 
+               'Surrogate function value': LlossOld, 
+               'KL divergence': kl})
+    
