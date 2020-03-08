@@ -6,7 +6,7 @@ import time
 import wandb
 
 import utils
-from networks import StateValueNetwork, PolicyNetworkDiscrete
+from networks import StateValueNetwork, PolicyNetworkDiscrete, PolicyNetworkContinuous
 from GAEBuffer import GAEBuffer
 
 parser = argparse.ArgumentParser(description='TRPO')
@@ -17,7 +17,7 @@ parser.add_argument('--seed', type=int, default=0,
                    help='seed of the experiment')
 parser.add_argument('--epochs', type=int, default=1000,
                    help="epochs to train")
-parser.add_argument('--epoch_len', type=int, default=10000,
+parser.add_argument('--epoch_len', type=int, default=4000,
                    help="length of one epoch")
 parser.add_argument('--gamma', type=float, default=0.99,
                    help='the discount factor gamma')
@@ -37,56 +37,64 @@ parser.add_argument('--alpha', type=float, default=0.8,
                    help="defult step size in line serach")
 parser.add_argument('--lambd', type=float, default=0.97,
                    help='lambda for GAE-Lambda')
-parser.add_argument('--max_episode_len', type=int, default=5000,
+parser.add_argument('--max_episode_len', type=int, default=1000,
                    help="max length of one episode")
+parser.add_argument('--wandb_projet_name', type=str, default="trust-region-policy-optimization",
+                   help="the wandb's project name")
+parser.add_argument('--exp_name', type=str, default=None,
+                   help='the name of this experiment')
 args = parser.parse_args()
 
-wandb.init(project="trust-region-policy-optimization")
-wandb.config.gym_id = args.gym_id
-wandb.config.seed = args.seed
-wandb.config.epochs = args.epochs
-wandb.config.epoch_len = args.epoch_len
-wandb.config.gamma = args.gamma
-wandb.config.delta = args.delta
-wandb.config.state_value_network_updates = args.state_value_network_updates
-wandb.config.learning_rate_state_value = args.learning_rate_state_value
-wandb.config.damping_coef = args.damping_coef
-wandb.config.cg_iters = args.cg_iters
-wandb.config.max_iters_line_search = args.max_iters_line_search
-wandb.config.alpha = args.alpha
-wandb.config.lambd = args.lambd
-wandb.config.max_episode_len = args.max_episode_len
+if args.exp_name is not None:
+    wandb.init(project=args.wandb_projet_name, config=vars(args), name=args.exp_name)
 
 if not args.seed:
     args.seed = int(time.time())
     
 sess = tf.Session()
 env = gym.make(args.gym_id)
+discreteActionsSpace = utils.isDiscrete(env)
 
 inputLength = env.observation_space.shape[0]
-#outputLength = env.action_space.n
-outputLength = 2
+outputLength = env.action_space.n if discreteActionsSpace else env.action_space.shape[0]
 
-buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, outputLength)
 
 #definition of placeholders
 logProbSampPh = tf.placeholder(dtype = tf.float32, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
-logProbsAllPh = tf.placeholder(dtype= tf.float32, shape=[None, outputLength], name="logProbsAll") #log probabilities of all actions according to sampling distribution (pi_old)
 advPh = tf.placeholder(dtype = tf.float32, shape=[None], name="advantages") #advantages obtained using GAE-lambda and values obtainet from StateValueNetwork V
 returnsPh = tf.placeholder(dtype = tf.float32, shape=[None], name="returns") #total discounted cumulative reward
 policyParamsFlatten= tf.placeholder(dtype = tf.float32, shape=[None], name = "policyParams") #policy params flatten, used in assingment of pi params in line search algorithm
 obsPh = tf.placeholder(dtype=tf.float32, shape=[None, inputLength], name="observations") #observations
-aPh = tf.placeholder(dtype=tf.int32, shape=[None], name="actions") #actions taken
+
+if discreteActionsSpace:
+    aPh = tf.placeholder(dtype=tf.int32, shape=[None], name="actions") #actions taken
+    logProbsAllPh = tf.placeholder(dtype= tf.float32, shape=[None, outputLength], name="logProbsAll") #log probabilities of all actions according to sampling distribution (pi_old)
+    additionalInfoLengths = [outputLength]
+else:
+    aPh = tf.placeholder(dtype=tf.float32, shape=[None,outputLength], name="actions")
+    oldActionMeanPh = tf.placeholder(dtype=tf.float32, shape=[None,outputLength], name="actionsMeanOld")
+    oldActionLogStdPh = tf.placeholder(dtype=tf.float32, shape=[None,outputLength], name="actionsLogStdOld") 
+    additionalInfoLengths = [outputLength, outputLength]
+
+buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, additionalInfoLengths)
 
 #definition of networks
 V = StateValueNetwork(sess, inputLength, args.learning_rate_state_value, obsPh) #this network has method for training, but it is never used. Instead, training is done outside of this class
-policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, obsPh) #policy network for discrete action space
-      
+if(discreteActionsSpace):
+    policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, obsPh, aPh) #policy network for discrete action space
+else:      
+    policy = PolicyNetworkContinuous(sess, inputLength, outputLength, obsPh, aPh)
+    
 #definition of losses to optimize
-ratio = tf.exp(policy.logProb(aPh) - logProbSampPh)
+ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
 Lloss = -tf.reduce_mean(ratio*advPh) # - sign because we want to maximize our objective
 stateValueLoss = tf.reduce_mean((V.output - returnsPh)**2)
-KLcontraint = tf.reduce_mean(tf.reduce_sum((logProbsAllPh - policy.logProbs)*tf.exp(logProbsAllPh), axis=1))
+
+KLinputs={}
+if(discreteActionsSpace):
+    KLcontraint = utils.categorical_kl(policy.logProbs, logProbsAllPh) 
+else:
+    KLcontraint = utils.diagonal_gaussian_kl(policy.actionMean, policy.actionLogStd, oldActionMeanPh, oldActionLogStdPh)     
 
 svfOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_state_value).minimize(stateValueLoss)
 
@@ -100,47 +108,65 @@ for e in range(args.epochs):
     
     obs, epLen, epRet = env.reset(), 0, 0
     
+    epochSt = time.time()
     for l in range(args.epoch_len):
         
-        #env.render()
-
-        sampledAction, logProbSampledAction, logProbsAll = policy.getSampledActions(np.expand_dims(obs, 0))    
+        if(e%10 == 0):
+            env.render()
+        
+        if discreteActionsSpace:
+            sampledAction, logProbSampledAction, logProbsAll = policy.getSampledActions(np.expand_dims(obs, 0))
+            additionalInfos = [logProbsAll]
+        else:
+            sampledAction, logProbSampledAction, actionsMean, actionLogStd = policy.getSampledActions(np.expand_dims(obs, 0))
+            additionalInfos = [actionsMean, actionLogStd]
+            
         predictedV = V.forward(np.expand_dims(obs, 0))
         
-        #nextObs, reward, terminal, _ = env.step(sampledAction[0])  
-        nextObs, reward, terminal, _ = env.step(sampledAction[0]+2)  
+        nextObs, reward, terminal, _ = env.step(sampledAction[0])  
         epLen += 1
         epRet += reward
 
-        buffer.add(obs, sampledAction[0], predictedV, logProbSampledAction, logProbsAll, reward)
+        buffer.add(obs, sampledAction[0], predictedV[0][0], logProbSampledAction, reward, additionalInfos)
         obs = nextObs
 
         done = terminal or l == args.max_episode_len
         if(done or l == args.epoch_len -1):
-            if(not terminal):
-                print("Cutting path. Either max episode length steps are done in current episode or epoch has finished")
+            #if(not terminal):
+                #print("Cutting path. Either max episode length steps are done in current episode or epoch has finished")
             val = 0 if terminal else V.forward(np.expand_dims(obs, 0))
             buffer.finishPath(val)
-            if terminal:
+            if terminal and args.exp_name is not None:
                 wandb.log({'Total reward': epRet, 'Episode length':epLen})
             obs, epLen, epRet = env.reset(), 0, 0
+    
+    epochEnd = time.time()
+    print("Epoch {} ended in {}".format(e, epochEnd-epochSt))
         
     #update policy and update state-value(multiple times) after that
-    observations, actions, advEst, sampledLogProb, allLogProbs, returns = buffer.get()
+    observations, actions, advEst, sampledLogProb, returns, additionalInfos = buffer.get()
     
-    policyParams = utils.get_vars("PolicyNetworkDiscrete")
+    suffix = "Continuous"
+    if discreteActionsSpace:
+        suffix = "Discrete"
+    policyParams = utils.get_vars("PolicyNetwork"+ suffix)
     getPolicyParams = utils.flat_concat(policyParams)
     setPolicyParams = utils.assign_params_from_flat(policyParamsFlatten, policyParams)
     
-    d, HxOp = utils.hesian_vector_product(KLcontraint, policyParams)#this is strange, newton direction with respect to constraint?
+    d, HxOp = utils.hesian_vector_product(KLcontraint, policyParams)
+    
     if args.damping_coef > 0:
         HxOp += args.damping_coef * d
-    Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, logProbsAllPh : allLogProbs, obsPh : observations})
+    if discreteActionsSpace:
+        Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, logProbsAllPh : additionalInfos[0], obsPh : observations})
+    else:
+        Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1], obsPh : observations})
     
-    grad = sess.run(utils.flat_grad(KLcontraint, policyParams), feed_dict = { logProbsAllPh : allLogProbs, obsPh:observations})
+    grad = sess.run(utils.flat_grad(Lloss, policyParams), feed_dict = { obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb})#, logProbsAllPh : allLogProbs})
     newDir = utils.conjugate_gradients(Hx, grad, args.cg_iters)
 
-    LlossOld = sess.run(Lloss , feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb, logProbsAllPh : allLogProbs})#L function inputs: observations, advantages estimated, logProb of sampled action, logProbsOfAllActions              
+    LlossOld = sess.run(Lloss , feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb})#, logProbsAllPh : allLogProbs})#L function inputs: observations, advantages estimated, logProb of sampled action, logProbsOfAllActions              
+    
     coef = np.sqrt(2*args.delta/(np.dot(np.transpose(newDir),Hx(newDir)) + 1e-8))
     
     oldParams = sess.run(getPolicyParams)
@@ -152,8 +178,11 @@ for e in range(args.epochs):
         
         #check if KL distance is within limits and is Lloss going down
         sess.run(setPolicyParams, feed_dict={policyParamsFlatten : oldParams - coef*newDir*step})
-        kl, LlossNew =  sess.run([KLcontraint, Lloss],  feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb, logProbsAllPh : allLogProbs})#same as L function inputs plus
-    
+        if discreteActionsSpace:
+            kl, LlossNew =  sess.run([KLcontraint, Lloss],  feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb, logProbsAllPh : additionalInfos[0]})#same as L function inputs plus
+        else:
+            kl, LlossNew =  sess.run([KLcontraint, Lloss],  feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1]})#same as L function inputs plus
+        
         if (kl <= args.delta and LlossNew <= LlossOld):
             LlossOld = LlossNew
             oldParams = oldParams - coef*newDir*step
@@ -163,11 +192,13 @@ for e in range(args.epochs):
             sess.run(setPolicyParams, feed_dict={policyParamsFlatten : oldParams})
             print("Line search didn't find step size that satisfies KL constraint")
     
+    
     for j in range(args.state_value_network_updates):
         sess.run(svfOptimizationStep, feed_dict={obsPh : observations, returnsPh : returns})
     
     SVLoss = sess.run(stateValueLoss, feed_dict={obsPh : observations, returnsPh : returns})
-    wandb.log({'Value function loss': SVLoss, 
-               'Surrogate function value': LlossOld, 
-               'KL divergence': kl})
+    if args.exp_name is not None:
+        wandb.log({'Value function loss': SVLoss, 
+                   'Surrogate function value': LlossOld, 
+                   'KL divergence': kl})
     

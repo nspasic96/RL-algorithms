@@ -1,9 +1,6 @@
 import tensorflow as tf
 import numpy as np
-
-#This should be returned
-#import tensorflow_probability as tfp
-#tfd = tfp.distributions 
+import utils
 
 #TODO : For every network change train function interface: it should get placeholder names and values as input. Also change initialization(input placeholder must be provaded as well as hidden layer sizes)
 
@@ -22,8 +19,9 @@ class StateValueNetwork:
 
     def _createDefault(self):
         with tf.variable_scope("StateValueNetwork{}".format(self.suffix)):
-            curNode = tf.layers.Dense(64, tf.nn.relu, use_bias = True, kernel_initializer= tf.initializers.truncated_normal(), name="fc1")(self.input)
-            self.output = tf.layers.Dense(1, use_bias = True, kernel_initializer= tf.initializers.truncated_normal(), name="output")(curNode)
+            curNode = tf.layers.Dense(64, tf.nn.tanh, use_bias = True, name="fc1")(self.input)
+            curNode = tf.layers.Dense(64, tf.nn.tanh, use_bias = True, name="fc2")(curNode)
+            self.output = tf.layers.Dense(1, use_bias = True, name="output")(curNode)
             
             self.target = tf.placeholder(dtype = tfDtype, shape = [None, 1], name="target")
             self.loss = tf.losses.mean_squared_error(self.target, self.output)
@@ -39,6 +37,7 @@ class StateValueNetwork:
                     
     def forward(self, observations):        
         assert (len(observations.shape) == 2 and observations.shape[1] == self.inputLength)
+        
         return self.sess.run(self.output, feed_dict = {self.input : observations})
     
     def train(self, observations, Qs, logPis): 
@@ -57,94 +56,79 @@ class StateValueNetwork:
         
 class PolicyNetworkDiscrete:
     
-    def __init__(self, sess, inputLength, outputLength, inputPh):
+    def __init__(self, sess, inputLength, outputLength, inputPh, actionsPh):
         self.inputLength = inputLength
         self.outputLength = outputLength
         self.sess = sess
         self.global_step = tf.Variable(0,dtype = tf.int32)
         self.i = 0
         self.inputs = inputPh
+        self.actions = actionsPh
         self._createDefault()      
                 
     def _createDefault(self):
         with tf.variable_scope("PolicyNetworkDiscrete"):
             
-            curNode = tf.layers.Dense(120, tf.nn.relu, use_bias = True,  name="fc1")(self.inputs)
-            curNode = tf.layers.Dense(84, tf.nn.relu, use_bias = True,  name="fc2")(curNode)
+            curNode = tf.layers.Dense(64, tf.nn.tanh, use_bias = True,  name="fc1")(self.inputs)
+            curNode = tf.layers.Dense(64, tf.nn.tanh, use_bias = True,  name="fc2")(curNode)
             self.logits = tf.layers.Dense(self.outputLength, use_bias = True,  name="actions")(curNode)
             self.logProbs = tf.nn.log_softmax(self.logits)
             
+            self.sampledActions = tf.squeeze(tf.random.categorical(self.logProbs, 1), axis=1)
+            self.sampledLogProbs = tf.reduce_sum(tf.one_hot(self.sampledActions, depth = self.outputLength)*self.logProbs)
             
-    def getSampledActions(self, inputs):
-          
-        actions = tf.squeeze(tf.random.categorical(self.logProbs, 1), axis=1)
-        sampledLogProbs = tf.reduce_sum(tf.one_hot(actions, depth = self.outputLength)*self.logProbs)
+            self.logProbWithCurrParams = tf.reduce_sum(tf.one_hot(self.actions, depth=self.outputLength)*self.logProbs, axis=1)#log probs for actions given the observation(both fed with placeholder)
             
-        return self.sess.run([actions,sampledLogProbs, self.logProbs], feed_dict = {self.inputs : inputs})
-    
-    def logProb(self, actions):
-        return tf.reduce_sum(self.logProbs*tf.one_hot(actions, depth=self.outputLength), axis=1)
+            
+    def getSampledActions(self, inputs):                      
+        return self.sess.run([self.sampledActions, self.sampledLogProbs, self.logProbs], feed_dict = {self.inputs : inputs})
 
 
-class PolicyNetwork:
+class PolicyNetworkContinuous:
     
-    def __init__(self, sess, inputLength, outputLength, learningRate, squash):
+    def __init__(self, sess, inputLength, outputLength, inputPh, actionsPh, detachedLogStds=True, clipLogStd=False, squashActions=False):
         self.inputLength = inputLength
         self.outputLength = outputLength
-        self.learningRate = learningRate
+        self.input = inputPh
+        self.actions = actionsPh
         self.sess = sess
         self.global_step = tf.Variable(0,dtype = tf.int32)
         self.i = 0
-        self.initialized = False
-        self.squash = squash
+        self.clipLogStd = clipLogStd
+        self.detachedLogStds = detachedLogStds
+        self.squashActions = squashActions
+        self._createDefault()
         
     def _createDefault(self):
-        with tf.variable_scope("PolicyNetwork"):
-            self.inputs = tf.placeholder(dtype = tfDtype, shape = [None, self.inputLength], name="input")
-            curNode = tf.layers.Dense(120, tf.nn.relu, use_bias = True,  name="fc1")(self.inputs)
-            curNode = tf.layers.Dense(84, tf.nn.relu, use_bias = True,  name="fc2")(curNode)
+        with tf.variable_scope("PolicyNetworkContinuous"):
+            curNode = tf.layers.Dense(64, tf.nn.relu, use_bias = True,  name="fc1")(self.input)
+            curNode = tf.layers.Dense(64, tf.nn.relu, use_bias = True,  name="fc2")(curNode)
             self.actionMean = tf.layers.Dense(self.outputLength, use_bias = True,  name="ActionsMean")(curNode)
-            self.actionLogStd = tf.layers.Dense(self.outputLength, use_bias = True, name="ActionsLogStd")(curNode)
-        
-            self.actionLogStdCliped = tf.clip_by_value(self.actionLogStd, -20, 2)
-            self.actionStd = tf.math.exp(self.actionLogStdCliped)
-            
-            self.actionSampler = tfd.Normal(loc=self.actionMean, scale=self.actionStd)
-            self.actionRaw = self.actionSampler.sample()  
-            
-            if self.squash: 
-                self.actionSquashed = tf.tanh(self.actionRaw)
+            if self.detachedLogStds:
+                self.actionLogStd = tf.get_variable(name='ActionsLogStd', initializer=-0.5*np.ones(self.outputLength, dtype=np.float32))
             else:
-                self.actionSquashed = self.actionRaw
+                self.actionLogStd = tf.layers.Dense(self.outputLength, use_bias = True, name="ActionsLogStd")(curNode)
+        
+            if self.clipLogStd:
+                self.actionLogStd = tf.clip_by_value(self.actionLogStd, -20, 2, name="ClipedActionsLogStd")
+                
+            self.actionStd = tf.math.exp(self.actionLogStd)
             
-            self.actionsPlh = tf.placeholder(dtype = tfDtype, shape = [None, 3])
-            self.targets = tf.placeholder(dtype = tfDtype, shape = [None, 1])
-            self.logProbs = tf.expand_dims(tf.reduce_sum(self.actionSampler.log_prob(self.actionsPlh), axis=-1),1)
-            self.loss = tf.losses.mean_squared_error(self.targets, self.logProbs)
+            self.actionRaw = self.actionMean + tf.random_normal(tf.shape(self.actionMean)) * self.actionStd
             
+            #TODO: CHeck whether this work when squash=True(because gaussian_likelihood doesnt take it into consideration)
+            if self.squashActions: 
+                self.actionFinal = tf.tanh(self.actionRaw)
+            else:
+                self.actionFinal = self.actionRaw   
+                
+            self.sampledLogProbs = utils.gaussian_likelihood(self.actionRaw, self.actionMean, self.actionLogStd)
+            self.logProbWithCurrParams = utils.gaussian_likelihood(self.actions, self.actionMean, self.actionLogStd)#log prob(joint, all action components are from gaussian) for action given the observation(both fed with placeholder)
             
-            self.optimizer = tf.train.AdamOptimizer(learning_rate = self.learningRate)
-            gradients, variables = zip(*self.optimizer.compute_gradients(self.loss))
-            gradients, _ = tf.clip_by_global_norm(gradients, .5)
-            self.minimizationOperation = self.optimizer.apply_gradients(zip(gradients, variables))
-            #self.minimizationOperation = tf.train.AdamOptimizer(learning_rate = self.learningRate).minimize(self.loss, global_step = self.global_step)
                            
-    def getSampledAction(self, observations):
-        if not self.initialized:
-            self._createDefault()
-            init = tf.initialize_local_variables()
-            init2 = tf.initialize_all_variables()
-            self.sess.run([init,init2])
-            self.initialized = True
-        return self.sess.run([self.actionSquashed, self.actionRaw, self.actionMean, self.actionStd], feed_dict = {self.inputs : observations})
-        
-    def train(self, observations, actions, Qs):
-        
-        targets = Qs       
-        
-        self.global_step = self.global_step + 1
-        return self.sess.run(self.minimizationOperation, feed_dict = {self.inputs : observations, self.targets : targets, self.actionsPlh : actions})        
-           
+    def getSampledActions(self, observations):
+        return self.sess.run([self.actionFinal, self.sampledLogProbs, self.actionMean, self.actionLogStd], feed_dict = {self.input : observations})
+         
         
 class SoftQNetwork:
     

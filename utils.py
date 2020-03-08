@@ -4,6 +4,7 @@ from skimage.transform import resize
 import tensorflow as tf
 from scipy.stats import norm as NormalDistribution #TODO:check if this should be here
 import scipy.signal as signal
+from gym.spaces import Box, Discrete
 
 def newExploration(minn,maxx,step,STEPS_TO_DECREASE):
     return maxx + step*(minn-maxx)/STEPS_TO_DECREASE
@@ -177,10 +178,37 @@ def assign_params_from_flat(x, params):
 
 def hesian_vector_product(f, theta):
     g = flat_grad(f, theta)
-    x = tf.placeholder(dtype=tf.float32, shape=g.shape, name="NewtonDir")
+    x = tf.placeholder(dtype=tf.float32, shape=g.shape, name="Hinvg")
     gTx = tf.reduce_sum(g*x)
     Hx = flat_grad(gTx, theta)
     return x, Hx     
 
 def disount_cumsum(x, discount):
     return signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
+
+def gaussian_likelihood(x, mu, log_std):
+    pre_sum = -0.5 * (((x-mu)/(tf.exp(log_std)+1e-8))**2 + 2*log_std + np.log(2*np.pi))
+    return tf.reduce_sum(pre_sum, axis=1)
+
+def diagonal_gaussian_kl(mu0, log_std0, mu1, log_std1):
+    """
+    tf symbol for mean KL divergence between two batches of diagonal gaussian distributions,
+    where distributions are specified by means and log stds.
+    (https://en.wikipedia.org/wiki/Kullback-Leibler_divergence#Multivariate_normal_distributions)
+    """
+    var0, var1 = tf.exp(2 * log_std0), tf.exp(2 * log_std1)
+    pre_sum = 0.5*(((mu1- mu0)**2 + var0)/(var1 + 1e-8) - 1) +  log_std1 - log_std0
+    all_kls = tf.reduce_sum(pre_sum, axis=1)
+    return tf.reduce_mean(all_kls)
+
+def categorical_kl(logp0, logp1):
+    """
+    tf symbol for mean KL divergence between two batches of categorical probability distributions,
+    where the distributions are input as log probs.
+    """
+    all_kls = tf.reduce_sum(tf.exp(logp1) * (logp1 - logp0), axis=1)
+    return tf.reduce_mean(all_kls)
+
+def isDiscrete(env):
+    return isinstance(env.action_space, Discrete)
+    

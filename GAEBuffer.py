@@ -4,29 +4,49 @@ import numpy as np
 
 class GAEBuffer:
     
-    def __init__(self, gamma, lamb, size, obsLen, actLen):
+    def __init__(self, gamma, lamb, size, obsLen, actLen, additionalInfoLengths):
         self.currentIdx, self.pathStartIdx = 0, 0
         self.gamma = gamma
         self.lamb = lamb
 
         self.obsBuff = np.zeros((size, obsLen))
-        self.actBuff = np.zeros(size, dtype=np.int32)
+        if(actLen > 1):
+            self.actBuff = np.zeros((size, actLen))
+        else:            
+            self.actBuff = np.zeros(size)
         self.predValsBuff = np.zeros(size)
         self.samLogProbBuff = np.zeros(size)
-        self.allLogProbBuff = np.zeros((size, actLen))
         self.rewardsBuff = np.zeros(size)
         self.advantagesBuff = np.zeros(size)
         self.returnsBuff = np.zeros(size)
+        
+        self.additionalInfos = [np.zeros((size, l)) for l in additionalInfoLengths]
 
 
-
-    def add(self, obs, action, predictedV, logProbSampledAction, logProbsAll, reward):
+    def add(self, obs, action, predictedV, logProbSampledAction, reward, additionalInfos):
+        """
+        print(obs.shape)
+        print(action.shape)
+        print(predictedV.shape)
+        print(logProbSampledAction.shape)
+        print(logProbsAll.shape)
+        print(reward.shape)
+        
+        if(self.currentIdx == 1):
+            print(self.obsBuff)
+            print(self.actBuff)
+            print(self.rewardsBuff)
+            print(self.predValsBuff)
+            print(self.samLogProbBuff)
+        """
+            
         self.obsBuff[self.currentIdx] = obs
         self.actBuff[self.currentIdx] = action
         self.predValsBuff[self.currentIdx] = predictedV
         self.samLogProbBuff[self.currentIdx] = logProbSampledAction
-        self.allLogProbBuff[self.currentIdx] = logProbsAll
         self.rewardsBuff[self.currentIdx] = reward
+        for idx, additionalInfo in enumerate(additionalInfos):
+            self.additionalInfos[idx][self.currentIdx] = additionalInfo
 
         self.currentIdx += 1
 
@@ -40,7 +60,7 @@ class GAEBuffer:
         self.advantagesBuff[path_slice] = utils.disount_cumsum(deltas, self.gamma * self.lamb) 
         self.returnsBuff[path_slice] = utils.disount_cumsum(pathRews, self.gamma)[:-1]
 
-        self.currentIdx = self.pathStartIdx
+        self.pathStartIdx = self.currentIdx 
 
     def get(self):
 
@@ -49,11 +69,11 @@ class GAEBuffer:
         observations = self.obsBuff
         actions = self.actBuff
         sampledLogProb = self.samLogProbBuff
-        allLogProbs = self.allLogProbBuff
         advantages = self.advantagesBuff
         returns = self.returnsBuff
+        additionalInfos = self.additionalInfos
 
 
-        return observations, actions, advantages, sampledLogProb, allLogProbs, returns
+        return observations, actions, advantages, sampledLogProb, returns, additionalInfos
         
     
