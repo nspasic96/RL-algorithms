@@ -66,14 +66,6 @@ class GAEBuffer:
 
         self.currentIdx, self.pathStartIdx = 0, 0
 
-        observations = self.obsBuff
-        actions = self.actBuff
-        sampledLogProb = self.samLogProbBuff
-        advantages = self.advantagesBuff
-        returns = self.returnsBuff
-        additionalInfos = self.additionalInfos
-
-
-        return observations, actions, advantages, sampledLogProb, returns, additionalInfos
+        return self.obsBuff, self.actBuff, self.advantagesBuff, self.samLogProbBuff, self.returnsBuff, self.additionalInfos
         
     

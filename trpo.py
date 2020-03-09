@@ -98,6 +98,19 @@ else:
 
 svfOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_state_value).minimize(stateValueLoss)
 
+#other ops
+suffix = "Continuous"
+if discreteActionsSpace:
+    suffix = "Discrete"
+policyParams = utils.get_vars("PolicyNetwork"+ suffix)
+getPolicyParams = utils.flat_concat(policyParams)
+setPolicyParams = utils.assign_params_from_flat(policyParamsFlatten, policyParams)
+
+d, HxOp = utils.hesian_vector_product(KLcontraint, policyParams)
+
+if args.damping_coef > 0:
+    HxOp += args.damping_coef * d
+
 #tf session initialization
 init = tf.initialize_local_variables()
 init2 = tf.initialize_all_variables()
@@ -139,24 +152,10 @@ for e in range(args.epochs):
             if terminal and args.exp_name is not None:
                 wandb.log({'Total reward': epRet, 'Episode length':epLen})
             obs, epLen, epRet = env.reset(), 0, 0
-    
-    epochEnd = time.time()
-    print("Epoch {} ended in {}".format(e, epochEnd-epochSt))
         
     #update policy and update state-value(multiple times) after that
     observations, actions, advEst, sampledLogProb, returns, additionalInfos = buffer.get()
-    
-    suffix = "Continuous"
-    if discreteActionsSpace:
-        suffix = "Discrete"
-    policyParams = utils.get_vars("PolicyNetwork"+ suffix)
-    getPolicyParams = utils.flat_concat(policyParams)
-    setPolicyParams = utils.assign_params_from_flat(policyParamsFlatten, policyParams)
-    
-    d, HxOp = utils.hesian_vector_product(KLcontraint, policyParams)
-    
-    if args.damping_coef > 0:
-        HxOp += args.damping_coef * d
+        
     if discreteActionsSpace:
         Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, logProbsAllPh : additionalInfos[0], obsPh : observations})
     else:
@@ -201,4 +200,7 @@ for e in range(args.epochs):
         wandb.log({'Value function loss': SVLoss, 
                    'Surrogate function value': LlossOld, 
                    'KL divergence': kl})
+    
+    epochEnd = time.time()
+    print("Epoch {} ended in {}".format(e, epochEnd-epochSt))
     
