@@ -7,8 +7,9 @@ import utils
 tfDtype = tf.float32 
 class StateValueNetwork:
     
-    def __init__(self, sess, inputLength, learningRate, inputPh, suffix=""):
+    def __init__(self, sess, inputLength, hiddenLaySizes, learningRate, inputPh, suffix=""):
         self.inputLength = inputLength
+        self.hiddenLayers = hiddenLaySizes
         self.learningRate = learningRate
         self.sess = sess
         self.global_step = tf.Variable(0,dtype = tf.int32)
@@ -19,8 +20,11 @@ class StateValueNetwork:
 
     def _createDefault(self):
         with tf.variable_scope("StateValueNetwork{}".format(self.suffix)):
-            curNode = tf.layers.Dense(64, tf.nn.tanh, use_bias = True, name="fc1")(self.input)
-            curNode = tf.layers.Dense(64, tf.nn.tanh, use_bias = True, name="fc2")(curNode)
+            
+            curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.input)
+            for i,l in enumerate(self.hiddenLayers[1:]):
+                curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
+            
             self.output = tf.layers.Dense(1, use_bias = True, name="output")(curNode)
             
             self.target = tf.placeholder(dtype = tfDtype, shape = [None, 1], name="target")
@@ -56,21 +60,23 @@ class StateValueNetwork:
         
 class PolicyNetworkDiscrete:
     
-    def __init__(self, sess, inputLength, outputLength, inputPh, actionsPh):
+    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputPh, actionsPh):
         self.inputLength = inputLength
         self.outputLength = outputLength
+        self.hiddenLayers = hiddenLaySizes
         self.sess = sess
         self.global_step = tf.Variable(0,dtype = tf.int32)
         self.i = 0
-        self.inputs = inputPh
+        self.input = inputPh
         self.actions = actionsPh
         self._createDefault()      
                 
     def _createDefault(self):
         with tf.variable_scope("PolicyNetworkDiscrete"):
             
-            curNode = tf.layers.Dense(64, tf.nn.tanh, use_bias = True,  name="fc1")(self.inputs)
-            curNode = tf.layers.Dense(64, tf.nn.tanh, use_bias = True,  name="fc2")(curNode)
+            curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.input)
+            for i,l in enumerate(self.hiddenLayers[1:]):
+                curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
             self.logits = tf.layers.Dense(self.outputLength, use_bias = True,  name="actions")(curNode)
             self.logProbs = tf.nn.log_softmax(self.logits)
             
@@ -86,11 +92,12 @@ class PolicyNetworkDiscrete:
 
 class PolicyNetworkContinuous:
     
-    def __init__(self, sess, inputLength, outputLength, inputPh, actionsPh, detachedLogStds=True, clipLogStd=False, squashActions=False):
+    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputPh, actionsPh, detachedLogStds=True, clipLogStd=False, squashActions=False):
         self.inputLength = inputLength
         self.outputLength = outputLength
         self.input = inputPh
         self.actions = actionsPh
+        self.hiddenLayers = hiddenLaySizes
         self.sess = sess
         self.global_step = tf.Variable(0,dtype = tf.int32)
         self.i = 0
@@ -101,8 +108,9 @@ class PolicyNetworkContinuous:
         
     def _createDefault(self):
         with tf.variable_scope("PolicyNetworkContinuous"):
-            curNode = tf.layers.Dense(64, tf.nn.relu, use_bias = True,  name="fc1")(self.input)
-            curNode = tf.layers.Dense(64, tf.nn.relu, use_bias = True,  name="fc2")(curNode)
+            curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.input)
+            for i,l in enumerate(self.hiddenLayers[1:]):
+                curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
             self.actionMean = tf.layers.Dense(self.outputLength, use_bias = True,  name="ActionsMean")(curNode)
             if self.detachedLogStds:
                 self.actionLogStd = tf.get_variable(name='ActionsLogStd', initializer=-0.5*np.ones(self.outputLength, dtype=np.float32))

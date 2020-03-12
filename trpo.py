@@ -25,6 +25,10 @@ parser.add_argument('--delta', type=float, default=0.01,
                    help='max KL distance between two successive distributions')
 parser.add_argument('--learning_rate_state_value', type=float, default=1e-3,
                    help='the learning rate of the optimizer of state-value function')
+parser.add_argument('--hidden_layers_state_value', type=int, nargs='+', default=[64,64],
+                   help='hidden layers size in state value network')
+parser.add_argument('--hidden_layers_policy', type=int, nargs='+', default=[64,64],
+                   help='hidden layers size in policy network')
 parser.add_argument('--state_value_network_updates', type=int, default=80,
                    help="number of updates for state-value network")
 parser.add_argument('--damping_coef', type=float, default=0.1,
@@ -79,11 +83,11 @@ else:
 buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, additionalInfoLengths)
 
 #definition of networks
-V = StateValueNetwork(sess, inputLength, args.learning_rate_state_value, obsPh) #this network has method for training, but it is never used. Instead, training is done outside of this class
+V = StateValueNetwork(sess, inputLength, args.hidden_layers_state_value, args.learning_rate_state_value, obsPh) #this network has method for training, but it is never used. Instead, training is done outside of this class
 if(discreteActionsSpace):
-    policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, obsPh, aPh) #policy network for discrete action space
+    policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh) #policy network for discrete action space
 else:      
-    policy = PolicyNetworkContinuous(sess, inputLength, outputLength, obsPh, aPh)
+    policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh)
     
 #definition of losses to optimize
 ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
