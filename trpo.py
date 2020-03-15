@@ -1,5 +1,6 @@
 import argparse
 import gym
+import pybullet_envs
 import numpy as np
 import tensorflow as tf
 import time
@@ -13,7 +14,7 @@ parser = argparse.ArgumentParser(description='TRPO')
 
 parser.add_argument('--gym-id', type=str, default="Pong-ram-v0",
                    help='the id of the gym environment')
-parser.add_argument('--seed', type=int, default=0,
+parser.add_argument('--seed', type=int, default=1,
                    help='seed of the experiment')
 parser.add_argument('--epochs', type=int, default=1000,
                    help="epochs to train")
@@ -47,10 +48,11 @@ parser.add_argument('--wandb_projet_name', type=str, default="trust-region-polic
                    help="the wandb's project name")
 parser.add_argument('--exp_name', type=str, default=None,
                    help='the name of this experiment')
+parser.add_argument('--play_every_nth_epoch', type=int, default=10,
+                   help='every nth epoch will be rendered, set to epochs+1 not to render at all')
 args = parser.parse_args()
 
-if args.exp_name is not None:
-    wandb.init(project=args.wandb_projet_name, config=vars(args), name=args.exp_name)
+svfTrainInBatchesThreshold = 5000
 
 if not args.seed:
     args.seed = int(time.time())
@@ -62,6 +64,15 @@ discreteActionsSpace = utils.isDiscrete(env)
 inputLength = env.observation_space.shape[0]
 outputLength = env.action_space.n if discreteActionsSpace else env.action_space.shape[0]
 
+if args.exp_name is not None:
+    cnf = vars(args)
+    cnf['action_space_type'] = 'discrete' if discreteActionsSpace else 'continuous'
+    cnf['input_length'] = inputLength
+    cnf['output_length'] = outputLength
+    note = ""
+    if(args.epoch_len > svfTrainInBatchesThreshold):
+        note = "State value training split in batches of size {} because of too large number of samples".format(svfTrainInBatchesThreshold)
+    wandb.init(project=args.wandb_projet_name, config=cnf, name=args.exp_name, notes=note)
 
 #definition of placeholders
 logProbSampPh = tf.placeholder(dtype = tf.float32, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
@@ -94,7 +105,6 @@ ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
 Lloss = -tf.reduce_mean(ratio*advPh) # - sign because we want to maximize our objective
 stateValueLoss = tf.reduce_mean((V.output - returnsPh)**2)
 
-KLinputs={}
 if(discreteActionsSpace):
     KLcontraint = utils.categorical_kl(policy.logProbs, logProbsAllPh) 
 else:
@@ -128,7 +138,7 @@ for e in range(args.epochs):
     epochSt = time.time()
     for l in range(args.epoch_len):
         
-        if(e%10 == 0):
+        if(e % args.play_every_nth_epoch == args.play_every_nth_epoch - 1):
             env.render()
         
         if discreteActionsSpace:
@@ -147,7 +157,7 @@ for e in range(args.epochs):
         buffer.add(obs, sampledAction[0], predictedV[0][0], logProbSampledAction, reward, additionalInfos)
         obs = nextObs
 
-        done = terminal or l == args.max_episode_len
+        done = terminal or epLen == args.max_episode_len
         if(done or l == args.epoch_len -1):
             #if(not terminal):
                 #print("Cutting path. Either max episode length steps are done in current episode or epoch has finished")
@@ -174,6 +184,9 @@ for e in range(args.epochs):
     
     oldParams = sess.run(getPolicyParams)
     
+    if args.exp_name is not None:
+        wandb.config.policy_params = oldParams.shape[0]
+    
     kl = 0
     
     for j in range(args.max_iters_line_search):
@@ -182,13 +195,11 @@ for e in range(args.epochs):
         #check if KL distance is within limits and is Lloss going down
         sess.run(setPolicyParams, feed_dict={policyParamsFlatten : oldParams - coef*newDir*step})
         if discreteActionsSpace:
-            kl, LlossNew =  sess.run([KLcontraint, Lloss],  feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb, logProbsAllPh : additionalInfos[0]})#same as L function inputs plus
+            kl, LlossNew = sess.run([KLcontraint, Lloss],  feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb, logProbsAllPh : additionalInfos[0]})#same as L function inputs plus
         else:
-            kl, LlossNew =  sess.run([KLcontraint, Lloss],  feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1]})#same as L function inputs plus
+            kl, LlossNew = sess.run([KLcontraint, Lloss],  feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1]})#same as L function inputs plus
         
         if (kl <= args.delta and LlossNew <= LlossOld):
-            LlossOld = LlossNew
-            oldParams = oldParams - coef*newDir*step
             break
         
         if(j == args.max_iters_line_search - 1):
@@ -197,13 +208,30 @@ for e in range(args.epochs):
     
     
     for j in range(args.state_value_network_updates):
-        sess.run(svfOptimizationStep, feed_dict={obsPh : observations, returnsPh : returns})
-    
+        #5000 works as batch size, 50000 doesn't. For now, training is split so that no input exceeds 5000 examples
+        if(observations.shape[0] > svfTrainInBatchesThreshold):
+            total = observations.shape[0]
+            start = 0
+            while(start < total):    
+                end = np.amin([start+svfTrainInBatchesThreshold, total])
+                sess.run(svfOptimizationStep, feed_dict={obsPh : observations[start:end], returnsPh : returns[start:end]})
+                start = end
+        else:
+            sess.run(svfOptimizationStep, feed_dict={obsPh : observations, returnsPh : returns})
+                
+            
+                
     SVLoss = sess.run(stateValueLoss, feed_dict={obsPh : observations, returnsPh : returns})
     if args.exp_name is not None:
         wandb.log({'Value function loss': SVLoss, 
-                   'Surrogate function value': LlossOld, 
+                   'Surrogate function value diff': LlossNew - LlossOld, 
                    'KL divergence': kl})
+        if ((not discreteActionsSpace) and (additionalInfos[1].shape[1]<7)):
+            stds = np.exp(additionalInfos[1])
+            meanStds = np.mean(stds,axis=0)
+            for i in range(len(meanStds)):
+                wandb.log({'std_{}'.format(i): meanStds[i]})
+        
     
     epochEnd = time.time()
     print("Epoch {} ended in {}".format(e, epochEnd-epochSt))
