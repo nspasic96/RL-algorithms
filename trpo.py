@@ -73,12 +73,10 @@ with tf.Session(graph=graph) as sess:
     KLPh = tf.placeholder(tf.float32, shape=None, name='kl_divergence_summary')
     epRewSum = tf.summary.scalar('episode_reward', epRewPh)
     epLenSum = tf.summary.scalar('episode_length', epLenPh)
-    SVLossSum = tf.summary.scalar('value_function_loss', SVLossPh)
+    SVLossSummary = tf.summary.scalar('value_function_loss', SVLossPh)
     SurrogateDiffSum = tf.summary.scalar('surrogate_function_value', SurrogateDiffPh)
     KLSum = tf.summary.scalar('kl_divergence', KLPh)  
-    
-    SVLossSum, SurrogateDiffSum, KLSum
-    
+            
     if args.exp_name is not None:
         
         experimentName = f"{args.gym_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -110,14 +108,14 @@ with tf.Session(graph=graph) as sess:
         additionalInfoLengths = [outputLength, outputLength]
     
     buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, additionalInfoLengths)
-    
+   
     #definition of networks
     V = StateValueNetwork(sess, inputLength, args.hidden_layers_state_value, args.learning_rate_state_value, obsPh) #this network has method for training, but it is never used. Instead, training is done outside of this class
     if(discreteActionsSpace):
         policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh) #policy network for discrete action space
     else:      
         policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh)
-        
+      
     #definition of losses to optimize
     ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
     Lloss = -tf.reduce_mean(ratio*advPh) # - sign because we want to maximize our objective
@@ -276,7 +274,7 @@ with tf.Session(graph=graph) as sess:
         print("\tState value loss in epoch {} calculated in {}".format(e, svLossEnd-svLossStart))
         
         if args.exp_name is not None:       
-            summarySVm, summarySurrogateDiff, summaryKL = sess.run([SVLossSum, SurrogateDiffSum, KLSum], feed_dict = {SVLossPh:SVLoss, SurrogateDiffPh:LlossNew - LlossOld, KLPh:kl})
+            summarySVm, summarySurrogateDiff, summaryKL = sess.run([SVLossSummary, SurrogateDiffSum, KLSum], feed_dict = {SVLossPh:SVLoss, SurrogateDiffPh:LlossNew - LlossOld, KLPh:kl})
             writer.add_summary(summarySVm, e)
             writer.add_summary(summarySurrogateDiff, e)
             writer.add_summary(summaryKL, e)        
