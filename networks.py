@@ -60,21 +60,21 @@ class StateValueNetwork:
         
 class PolicyNetworkDiscrete:
     
-    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputPh, actionsPh):
+    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputsPh, actionsPh):
         self.inputLength = inputLength
         self.outputLength = outputLength
         self.hiddenLayers = hiddenLaySizes
         self.sess = sess
         self.global_step = tf.Variable(0,dtype = tf.int32)
         self.i = 0
-        self.input = inputPh
+        self.inputs = inputsPh
         self.actions = actionsPh
         self._createDefault()      
                 
     def _createDefault(self):
         with tf.variable_scope("PolicyNetworkDiscrete"):
             
-            curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.input)
+            curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.inputs)
             for i,l in enumerate(self.hiddenLayers[1:]):
                 curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
             self.logits = tf.layers.Dense(self.outputLength, use_bias = True,  name="actions")(curNode)

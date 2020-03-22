@@ -1,6 +1,6 @@
 import argparse
 import gym
-import pybullet_envs
+import pybulletgym
 import numpy as np
 import tensorflow as tf
 import time
@@ -187,7 +187,6 @@ for e in range(args.epochs):
     if args.exp_name is not None:
         wandb.config.policy_params = oldParams.shape[0]
     
-    kl = 0
     
     for j in range(args.max_iters_line_search):
         step = args.alpha**j
@@ -204,11 +203,13 @@ for e in range(args.epochs):
         
         if(j == args.max_iters_line_search - 1):
             sess.run(setPolicyParams, feed_dict={policyParamsFlatten : oldParams})
+            LlossNew = LlossOld        
+            kl = 0 
             print("Line search didn't find step size that satisfies KL constraint")
     
     
     for j in range(args.state_value_network_updates):
-        #5000 works as batch size, 50000 doesn't. For now, training is split so that no input exceeds 5000 examples
+        #5000 works as batch size, 10000 doesn't. For now, training is split so that no input exceeds 5000 examples
         if(observations.shape[0] > svfTrainInBatchesThreshold):
             total = observations.shape[0]
             start = 0
@@ -219,9 +220,20 @@ for e in range(args.epochs):
         else:
             sess.run(svfOptimizationStep, feed_dict={obsPh : observations, returnsPh : returns})
                 
-            
-                
-    SVLoss = sess.run(stateValueLoss, feed_dict={obsPh : observations, returnsPh : returns})
+    #after update, calculate new loss
+    if observations.shape[0] > 2*svfTrainInBatchesThreshold:
+        total = observations.shape[0]
+        start = 0
+        SVLossSum = 0
+        while(start < total):    
+            end = np.amin([start+svfTrainInBatchesThreshold, total])
+            avgBatch = sess.run(stateValueLoss, feed_dict={obsPh : observations[start:end], returnsPh : returns[start:end]})
+            SVLossSum += avgBatch*(end-start)
+            start = end
+        SVLoss = SVLossSum/observations.shape[0]
+    else:
+        SVLoss = sess.run(stateValueLoss, feed_dict={obsPh : observations, returnsPh : returns})            
+        
     if args.exp_name is not None:
         wandb.log({'Value function loss': SVLoss, 
                    'Surrogate function value diff': LlossNew - LlossOld, 
