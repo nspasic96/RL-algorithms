@@ -1,5 +1,7 @@
 __pycache__/
 wandb/
 .vs/
+.vscode/
+src/
 .spyproject/
 runs/
