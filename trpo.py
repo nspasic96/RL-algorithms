@@ -85,6 +85,7 @@ with tf.Session(graph=graph) as sess:
         cnf['action_space_type'] = 'discrete' if discreteActionsSpace else 'continuous'
         cnf['input_length'] = inputLength
         cnf['output_length'] = outputLength
+        cnf['exp_name_tb'] = experimentName
         note = ""
         if(args.epoch_len > svfTrainInBatchesThreshold):
             note = "State value training split in batches of size {} because of too large number of samples".format(svfTrainInBatchesThreshold)
@@ -261,7 +262,7 @@ with tf.Session(graph=graph) as sess:
             start = 0
             SVLossSum = 0
             while(start < total):    
-                end = np.amin([start+svfTrainInBatchesThreshold, total])
+                end = np.amin([start+2*svfTrainInBatchesThreshold, total])
                 avgBatch = sess.run(stateValueLoss, feed_dict={obsPh : observations[start:end], returnsPh : returns[start:end]})
                 SVLossSum += avgBatch*(end-start)
                 start = end

@@ -25,7 +25,7 @@ class StateValueNetwork:
             for i,l in enumerate(self.hiddenLayers[1:]):
                 curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
             
-            self.output = tf.layers.Dense(1, use_bias = True, name="output")(curNode)
+            self.output = tf.layers.Dense(1, use_bias = False, name="output")(curNode)
             
             self.target = tf.placeholder(dtype = tfDtype, shape = [None, 1], name="target")
             self.loss = tf.losses.mean_squared_error(self.target, self.output)
