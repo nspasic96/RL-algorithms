@@ -164,14 +164,21 @@ def categorical_kl(logp0, logp1):
 def is_discrete(env):
     return isinstance(env.action_space, Discrete)
 
-def polyak(dst, src, rho, session):
+def polyak(dst, src, rho, session, verbose):
     scopeName= src.variablesScope
     trainableVars = tf.trainable_variables(scopeName)
-    dstVars=[]
+    assignOps=[]
+
+    if(verbose):
+        print("Scope name source: {}\nScope name destination: {}\nVariables to apply polyak:".format(scopeName,dst.variablesScope))
+        
     for var in trainableVars:
-        otherNamePart = var.name.split(scopeName)
-        dstVar = tf.get_variable(name=dst.variablesScope+otherNamePart)
-        dstVars.append(dstVar)
+        otherNamePart = var.name.split(scopeName)[1]
+        dstVar = session.graph.get_tensor_by_name(dst.variablesScope+otherNamePart)
+        if(verbose):
+            print(dstVar)
         newVal = rho*var+(1-rho)*dstVar
-        sess.run(tf.assign(dstVar, newVal))
+        assignOps.append(tf.assign(dstVar, newVal))
+    
+    session.run(assignOps)
     

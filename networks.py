@@ -74,17 +74,19 @@ class QNetwork:
         self._createDefault()
 
     def _createDefault(self):
-        if self.reuse is not None:
-            with tf.variable_scope("QNetwork{}".format(self.reuse.suffix)):
-                curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True, reuse=True, name="fc1")(self.input)
+
+        self.networkInput = tf.concat([self.input, self.action], axis = 1)
+        if self.reuse is not None:#TODO:see if this work
+            with tf.variable_scope("QNetwork{}".format(self.reuse.suffix), reuse = True):
+                curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True, name="fc1")(self.networkInput)
                 for i,l in enumerate(self.hiddenLayers[1:]):
-                    curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True, reuse=True, name="fc{}".format(i+2))(curNode)
+                    curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
                 
-                self.output = tf.layers.Dense(1, use_bias = False, reuse=True, name="output")(curNode)
+                self.output = tf.layers.Dense(1, use_bias = False, name="output")(curNode)
                 self.variablesScope = "QNetwork{}".format(self.reuse.suffix) 
         else:   
             with tf.variable_scope("QNetwork{}".format(self.suffix)): 
-                curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.input)
+                curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.networkInput)
                 for i,l in enumerate(self.hiddenLayers[1:]):
                     curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
                 
@@ -98,7 +100,7 @@ class QNetwork:
            
 class PolicyNetworkDiscrete:
     
-    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputsPh, actionsPh):
+    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputsPh, actionsPh, suffix):
         self.inputLength = inputLength
         self.outputLength = outputLength
         self.hiddenLayers = hiddenLaySizes
@@ -107,10 +109,11 @@ class PolicyNetworkDiscrete:
         self.i = 0
         self.inputs = inputsPh
         self.actions = actionsPh
+        self.suffix = suffix
         self._createDefault()      
                 
     def _createDefault(self):
-        with tf.variable_scope("PolicyNetworkDiscrete"):
+        with tf.variable_scope("PolicyNetworkDiscrete{}".format(self.suffix)):
             
             curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.inputs)
             for i,l in enumerate(self.hiddenLayers[1:]):
@@ -130,7 +133,7 @@ class PolicyNetworkDiscrete:
 
 class PolicyNetworkContinuous:
     
-    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputPh, actionsPh, detachedLogStds=True, clipLogStd=False, squashActions=False):
+    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputPh, actionsPh, suffix, logStdInit=None, logStdTrainable=True, clipLogStd=None, actionClip=None, squashAction=False):
         self.inputLength = inputLength
         self.outputLength = outputLength
         self.input = inputPh
@@ -140,33 +143,43 @@ class PolicyNetworkContinuous:
         self.global_step = tf.Variable(0,dtype = tf.int32)
         self.i = 0
         self.clipLogStd = clipLogStd
-        self.detachedLogStds = detachedLogStds
-        self.squashActions = squashActions
+        self.actionClip = actionClip
+        self.logStdInit = logStdInit
+        #this applies only if logStds in not None
+        self.logStdTrainable = logStdTrainable
+        self.squashAction = squashAction
+        self.suffix = suffix
+        self.variablesScope = "PolicyNetworkContinuous{}".format(suffix)
         self._createDefault()
         
     def _createDefault(self):
-        with tf.variable_scope("PolicyNetworkContinuous"):
+        with tf.variable_scope("PolicyNetworkContinuous{}".format(self.suffix)):
             curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.input)
             for i,l in enumerate(self.hiddenLayers[1:]):
                 curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
             self.actionMean = tf.layers.Dense(self.outputLength, use_bias = True,  name="ActionsMean")(curNode)
-            if self.detachedLogStds:
-                self.actionLogStd = tf.get_variable(name='ActionsLogStd', initializer=-0.5*np.ones(self.outputLength, dtype=np.float32))
+            if self.logStdInit is not None:
+                assert(self.logStdInit.shape == (1,self.outputLength)) 
+                self.actionLogStd = tf.get_variable(name="ActionsLogStdDetached{}Trainable".format("" if self.logStdTrainable else "Non"), initializer=self.logStdInit, trainable=self.logStdTrainable)
             else:
                 self.actionLogStd = tf.layers.Dense(self.outputLength, use_bias = True, name="ActionsLogStd")(curNode)
         
-            if self.clipLogStd:
-                self.actionLogStd = tf.clip_by_value(self.actionLogStd, -20, 2, name="ClipedActionsLogStd")
+            if self.clipLogStd is not None:
+                self.actionLogStd = tf.clip_by_value(self.actionLogStd, self.clipLogStd[0], self.clipLogStd[1], name="ClipedActionsLogStd")
                 
             self.actionStd = tf.math.exp(self.actionLogStd)
             
             self.actionRaw = self.actionMean + tf.random_normal(tf.shape(self.actionMean)) * self.actionStd
             
-            #TODO: CHeck whether this work when squash=True(because gaussian_likelihood doesnt take it into consideration)
-            if self.squashActions: 
+            #TODO: Check whether this work when squash=True(because gaussian_likelihood doesnt take it into consideration)
+            if self.squashAction: 
                 self.actionFinal = tf.tanh(self.actionRaw)
             else:
                 self.actionFinal = self.actionRaw   
+            
+            if self.actionClip is not None: 
+                assert(self.actionClip.shape == (2, self.outputLength) )
+                self.actionFinal = tf.clip_by_value(self.actionFinal, self.actionClip[0,:], self.actionClip[1,:])
                 
             self.sampledLogProbs = utils.gaussian_likelihood(self.actionRaw, self.actionMean, self.actionLogStd)
             self.logProbWithCurrParams = utils.gaussian_likelihood(self.actions, self.actionMean, self.actionLogStd)#log prob(joint, all action components are from gaussian) for action given the observation(both fed with placeholder)
