@@ -1,57 +1,9 @@
 import numpy as np
-from skimage.color import rgb2grey
-from skimage.transform import resize
 import tensorflow as tf
 from scipy.stats import norm as NormalDistribution #TODO:check if this should be here
 import scipy.signal as signal
 from gym.spaces import Box, Discrete
 
-def newExploration(minn,maxx,step,STEPS_TO_DECREASE):
-    return maxx + step*(minn-maxx)/STEPS_TO_DECREASE
-
-def stateWithHistory(stateBuffer,STATE_BUFFER_SIZE):
-    concList = [stateBuffer[i] for i in range(STATE_BUFFER_SIZE-1,-1,-1)]
-    return np.concatenate(concList, axis = 2)
-
-def processState(state, stateBuffer, STATE_BUFFER_SIZE):
-    state = transformState(state)
-    stateBuffer.append(state)
-    state = stateWithHistory(stateBuffer, STATE_BUFFER_SIZE)
-    return state
-
-def transformState(state):
-    shapeToResize = [110, 84]
-    grey = rgb2grey(state)
-    greyResized = resize(grey, shapeToResize)
-    offset = [12,8]
-    cropped = greyResized[offset[0]:-offset[1],:]
-    final = np.expand_dims(cropped,2)
-
-    final[np.abs(final - 0.32680196) < 1e-3] = 0 # erase background
-    final[np.abs(final - 0.9254902) < 1e-3] = 0 # erase background
-    final[final != 0] = 1 # set paddles and ball to 1
-    
-    return final
-
-def discountAndNormalize(rewards,GAMMA,normalize = False):
-
-    discounted_r = np.zeros_like(rewards)
-    running_add = 0
-    for t in range(len(rewards)-1, -1, -1):
-        if rewards[t] != 0: running_add = 0 # reset the sum, since this was a game boundary (pong specific!)
-        running_add = running_add * GAMMA + rewards[t]
-        discounted_r[t] = running_add
-
-    res = np.array(discounted_r)
-
-    if(normalize):
-        print(np.histogram(res))
-
-        res -= np.mean(res)
-        res /= np.std(res)
-
-    return res
-    
 def get_batch_from_memory(idxs, memory, target_network, q_network, GAMMA):
 
     states=[]
@@ -209,6 +161,6 @@ def categorical_kl(logp0, logp1):
     all_kls = tf.reduce_sum(tf.exp(logp1) * (logp1 - logp0), axis=1)
     return tf.reduce_mean(all_kls)
 
-def isDiscrete(env):
+def is_discrete(env):
     return isinstance(env.action_space, Discrete)
     

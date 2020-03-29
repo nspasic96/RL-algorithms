@@ -8,15 +8,7 @@ import time
 import utils
 from networks import StateValueNetwork, PolicyNetwork, SoftQNetwork
 
-register(
-	id='HopperBulletEnv-v0',
-	entry_point='pybullet_envs.gym_locomotion_envs:HopperBulletEnv',
-	max_episode_steps=1000,
-	reward_threshold=2500.0
-	)
-
-
-parser = argparse.ArgumentParser(description='SAC agent')
+parser = argparse.ArgumentParser(description='SAC')
 
 parser.add_argument('--gym-id', type=str, default="HopperBulletEnv-v0",
                    help='the id of the gym environment')

@@ -60,7 +60,7 @@ graph = tf.Graph()
 with tf.Session(graph=graph) as sess:
     
     env = gym.make(args.gym_id)
-    discreteActionsSpace = utils.isDiscrete(env)
+    discreteActionsSpace = utils.is_discrete(env)
     
     inputLength = env.observation_space.shape[0]
     outputLength = env.action_space.n if discreteActionsSpace else env.action_space.shape[0]
