@@ -57,7 +57,45 @@ class StateValueNetwork:
     
     def weightsAssign(self, other):
         return 0
+
+class QNetwork:
+    
+    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputPh, actionPh, suffix, reuse=None):
+        self.inputLength = inputLength
+        self.outputLength = outputLength
+        self.hiddenLayers = hiddenLaySizes
+        self.sess = sess
+        self.global_step = tf.Variable(0,dtype = tf.int32)
+        self.i = 0
+        self.suffix = suffix
+        self.input = inputPh
+        self.action = actionPh
+        self.reuse = reuse
+        self._createDefault()
+
+    def _createDefault(self):
+        if self.reuse is not None:
+            with tf.variable_scope("QNetwork{}".format(self.reuse.suffix)):
+                curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True, reuse=True, name="fc1")(self.input)
+                for i,l in enumerate(self.hiddenLayers[1:]):
+                    curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True, reuse=True, name="fc{}".format(i+2))(curNode)
+                
+                self.output = tf.layers.Dense(1, use_bias = False, reuse=True, name="output")(curNode)
+                self.variablesScope = "QNetwork{}".format(self.reuse.suffix) 
+        else:   
+            with tf.variable_scope("QNetwork{}".format(self.suffix)): 
+                curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.input)
+                for i,l in enumerate(self.hiddenLayers[1:]):
+                    curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
+                
+                self.output = tf.layers.Dense(1, use_bias = False, name="output")(curNode)
+                self.variablesScope = "QNetwork{}".format(self.suffix) 
+                   
+    def forward(self, observations):        
+        assert (len(observations.shape) == 2 and observations.shape[1] == self.inputLength)
         
+        return self.sess.run(self.output, feed_dict = {self.input : observations})
+           
 class PolicyNetworkDiscrete:
     
     def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputsPh, actionsPh):

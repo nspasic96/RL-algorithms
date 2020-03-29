@@ -163,4 +163,15 @@ def categorical_kl(logp0, logp1):
 
 def is_discrete(env):
     return isinstance(env.action_space, Discrete)
+
+def polyak(dst, src, rho, session):
+    scopeName= src.variablesScope
+    trainableVars = tf.trainable_variables(scopeName)
+    dstVars=[]
+    for var in trainableVars:
+        otherNamePart = var.name.split(scopeName)
+        dstVar = tf.get_variable(name=dst.variablesScope+otherNamePart)
+        dstVars.append(dstVar)
+        newVal = rho*var+(1-rho)*dstVar
+        sess.run(tf.assign(dstVar, newVal))
     
