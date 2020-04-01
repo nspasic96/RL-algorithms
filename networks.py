@@ -60,35 +60,45 @@ class StateValueNetwork:
 
 class QNetwork:
     
-    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputPh, actionPh, suffix, reuse=None):
+    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, hiddenLayerActivations, inputPh, actionPh, attachActionLayer, suffix, reuse=None):
         self.inputLength = inputLength
         self.outputLength = outputLength
         self.hiddenLayers = hiddenLaySizes
+        self.hiddenLayerActivations = hiddenLayerActivations
         self.sess = sess
         self.global_step = tf.Variable(0,dtype = tf.int32)
         self.i = 0
         self.suffix = suffix
         self.input = inputPh
         self.action = actionPh
+        self.attachActionLayer = attachActionLayer #to which hidden layer to attach action(0 based indexed)
         self.reuse = reuse
         self._createDefault()
 
     def _createDefault(self):
 
         self.networkInput = tf.concat([self.input, self.action], axis = 1)
-        if self.reuse is not None:#TODO:see if this work
+        if self.reuse is not None:
             with tf.variable_scope("QNetwork{}".format(self.reuse.suffix), reuse = True):
-                curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True, name="fc1")(self.networkInput)
+                curNode = tf.layers.Dense(self.hiddenLayers[0], self.hiddenLayerActivations[0], use_bias = True, name="fc1")(self.input)
+                if(self.attachActionLayer == 0):
+                    curNode = tf.concat([curNode, self.action], axis = 1)
                 for i,l in enumerate(self.hiddenLayers[1:]):
-                    curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
+                    curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i], use_bias = True,  name="fc{}".format(i+2))(curNode)
+                    if(self.attachActionLayer == i+1):
+                        curNode = tf.concat([curNode, self.action], axis = 1)
                 
                 self.output = tf.layers.Dense(1, use_bias = False, name="output")(curNode)
                 self.variablesScope = "QNetwork{}".format(self.reuse.suffix) 
         else:   
             with tf.variable_scope("QNetwork{}".format(self.suffix)): 
-                curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.networkInput)
+                curNode = tf.layers.Dense(self.hiddenLayers[0], self.hiddenLayerActivations[0], use_bias = True,  name="fc1")(self.input)
+                if(self.attachActionLayer == 0):
+                    curNode = tf.concat([curNode, self.action], axis = 1)
                 for i,l in enumerate(self.hiddenLayers[1:]):
-                    curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
+                    curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i], use_bias = True,  name="fc{}".format(i+2))(curNode)
+                    if(self.attachActionLayer == i+1):
+                        curNode = tf.concat([curNode, self.action], axis = 1)
                 
                 self.output = tf.layers.Dense(1, use_bias = False, name="output")(curNode)
                 self.variablesScope = "QNetwork{}".format(self.suffix) 
@@ -133,12 +143,13 @@ class PolicyNetworkDiscrete:
 
 class PolicyNetworkContinuous:
     
-    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, inputPh, actionsPh, suffix, logStdInit=None, logStdTrainable=True, clipLogStd=None, actionClip=None, squashAction=False):
+    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, hiddenLayerActivations, inputPh, actionsPh, suffix, logStdInit=None, logStdTrainable=True, clipLogStd=None, actionClip=None, squashAction=False):
         self.inputLength = inputLength
         self.outputLength = outputLength
         self.input = inputPh
         self.actions = actionsPh
         self.hiddenLayers = hiddenLaySizes
+        self.hiddenLayerActivations = hiddenLayerActivations
         self.sess = sess
         self.global_step = tf.Variable(0,dtype = tf.int32)
         self.i = 0
@@ -154,9 +165,9 @@ class PolicyNetworkContinuous:
         
     def _createDefault(self):
         with tf.variable_scope("PolicyNetworkContinuous{}".format(self.suffix)):
-            curNode = tf.layers.Dense(self.hiddenLayers[0], tf.nn.tanh, use_bias = True,  name="fc1")(self.input)
+            curNode = tf.layers.Dense(self.hiddenLayers[0], self.hiddenLayerActivations[0], use_bias = True,  name="fc1")(self.input)
             for i,l in enumerate(self.hiddenLayers[1:]):
-                curNode = tf.layers.Dense(l, tf.nn.tanh, use_bias = True,  name="fc{}".format(i+2))(curNode)
+                curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i], use_bias = True,  name="fc{}".format(i+2))(curNode)
             self.actionMean = tf.layers.Dense(self.outputLength, use_bias = True,  name="ActionsMean")(curNode)
             if self.logStdInit is not None:
                 assert(self.logStdInit.shape == (1,self.outputLength)) 

@@ -6,6 +6,9 @@ import tensorflow as tf
 import time
 import wandb
 
+import sys
+sys.path.append("../")
+
 import utils
 from networks import QNetwork, PolicyNetworkContinuous
 from ReplayBuffer import ReplayBuffer
@@ -16,27 +19,27 @@ parser.add_argument('--gym-id', type=str, default="HopperPyBulletEnv-v0",
                    help='the id of the gym environment')
 parser.add_argument('--seed', type=int, default=1,
                    help='seed of the experiment')
-parser.add_argument('--total_train_steps', type=int, default=1000000,
+parser.add_argument('--total_train_steps', type=int, default=2500000,
                    help="total number of steps to train")
 parser.add_argument('--gamma', type=float, default=0.99,
                    help='the discount factor gamma')
-parser.add_argument('--rho', type=float, default=0.01,
+parser.add_argument('--rho', type=float, default=0.001,
                    help='polyak')
 parser.add_argument('--learning_rate_q', type=float, default=1e-3,
                    help='learning rate of the optimizer of q function')
-parser.add_argument('--hidden_layers_q', type=int, nargs='+', default=[64,64],
+parser.add_argument('--hidden_layers_q', type=int, nargs='+', default=[400,300],
                    help='hidden layers size in state value network')
-parser.add_argument('--learning_rate_policy', type=float, default=1e-3,
+parser.add_argument('--learning_rate_policy', type=float, default=1e-4,
                    help='learning rate of the optimizer of policy function')
-parser.add_argument('--hidden_layers_policy', type=int, nargs='+', default=[64,64],
+parser.add_argument('--hidden_layers_policy', type=int, nargs='+', default=[400,300],
                    help='hidden layers size in policy network')
-parser.add_argument('--buffer_size', type=int, default=100000,
+parser.add_argument('--buffer_size', type=int, default=1000000,
                    help='size of reply buffer')
-parser.add_argument('--batch_size', type=int, default=256,
+parser.add_argument('--batch_size', type=int, default=64,
                    help='number of samples from reply buffer to train on')
-parser.add_argument('--update_after', type=int, default=100000,
+parser.add_argument('--update_after', type=int, default=1000,
                    help='number of samples in buffer before first update')
-parser.add_argument('--update_freq', type=int, default=10000,
+parser.add_argument('--update_freq', type=int, default=50,
                    help='update networks every update_freq steps')
 parser.add_argument('--eps', type=float, default=0.1,
                    help='non trainable gaussian noise to add to mean action value')
@@ -44,8 +47,8 @@ parser.add_argument('--max_episode_len', type=int, default=1000,
                    help="max length of one episode")
 parser.add_argument('--wandb_projet_name', type=str, default="deep-deterministic-policy-gradients",
                    help="the wandb's project name")
-parser.add_argument('--exp_name', type=str, default=None,
-                   help='the name of this experiment')
+parser.add_argument('--wandb_log', type=bool, default=False,
+                   help='whether to log results to wandb')
 parser.add_argument('--play_every_nth_epoch', type=int, default=10,
                    help='every nth epoch will be rendered, set to epochs+1 not to render at all')
 args = parser.parse_args()
@@ -65,43 +68,51 @@ with tf.Session(graph=graph) as sess:
     #summeries placeholders and summery scalar objects
     epRewPh = tf.placeholder(tf.float32, shape=None, name='episode_reward_summary')
     epLenPh = tf.placeholder(tf.float32, shape=None, name='episode_length_summary')
+    QLossPh = tf.placeholder(tf.float32, shape=None, name='q_function_loss_summary')
+    policyLossPh = tf.placeholder(tf.float32, shape=None, name='policy_function_value_summary')
     epRewSum = tf.summary.scalar('episode_reward', epRewPh)
     epLenSum = tf.summary.scalar('episode_length', epLenPh)
+    QLossSum = tf.summary.scalar('q_function_loss', QLossPh)
+    policyLossSum = tf.summary.scalar('policy_function_value', policyLossPh)  
             
-    if args.exp_name is not None:
-        
-        experimentName = f"{args.gym_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    if args.wandb_log:
+        implSuffix = "experimental"
+        experimentName = f"{args.gym_id}__ddpg_{implSuffix}__{args.seed}__{int(time.time())}"
         writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
         cnf = vars(args)
         cnf['action_space_type'] = 'continuous'
         cnf['input_length'] = inputLength
         cnf['output_length'] = outputLength
         cnf['exp_name_tb'] = experimentName
-        wandb.init(project=args.wandb_projet_name, config=cnf, name=args.exp_name, tensorboard=True)
+        wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, tensorboard=True)
     
     #definition of placeholders
     rewPh = tf.placeholder(dtype = tf.float32, shape=[None], name="rewards") 
     terPh = tf.placeholder(dtype = tf.float32, shape=[None], name="terminals")
-    obsPh = tf.placeholder(dtype=tf.float32, shape=[None, inputLength], name="observations") #observations    
-    nextObsPh = tf.placeholder(dtype=tf.float32, shape=[None, inputLength], name="nextObservations") #next observations    
+    obsPh = tf.placeholder(dtype=tf.float32, shape=[None, inputLength], name="observations")   
+    nextObsPh = tf.placeholder(dtype=tf.float32, shape=[None, inputLength], name="nextObservations")  
     aPh = tf.placeholder(dtype=tf.float32, shape=[None,outputLength], name="actions")
     
     #definition of networks
     clip = np.zeros(shape=(2,outputLength))
     clip[0,:] = env.action_space.low
     clip[1,:] = env.action_space.high
-    logStdInit = args.eps*np.ones(shape=(1,outputLength), dtype=np.float32)
+    #print("CLIP = {}".format(clip))
+    logStdInit = np.log(args.eps)*np.ones(shape=(1,outputLength), dtype=np.float32)
 
-    policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig", logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
-    policyTarget = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, nextObsPh, aPh, "Target", logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
-    Q = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, obsPh, aPh, suffix="Orig") # original Q network
-    QAux = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, obsPh, policy.actionFinal, suffix="Aux", reuse=Q) # network with parameters same as original Q network, but instead of action placeholder it takse output from current policy
-    QTarget = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, nextObsPh, policyTarget.actionFinal,suffix="Target") #target Q network, instead of action placeholder it takse output from target policy
+    policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [tf.nn.tanh]
+    qActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [None]
+
+    policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
+    policyTarget = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, nextObsPh, aPh, "Target", logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
+    Q = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh, aPh, 1, suffix="Orig") # original Q network
+    QAux = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh,  policy.actionFinal, 1, suffix="Aux", reuse=Q) # network with parameters same as original Q network, but instead of action placeholder it takse output from current policy
+    QTarget = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, nextObsPh, policyTarget.actionFinal, 1, suffix="Target") #target Q network, instead of action placeholder it takse output from target policy
 
     #definition of losses to optimize
     policyLoss = -tf.reduce_mean(QAux.output)# - sign because we want to maximize our objective    
     targets = tf.stop_gradient(rewPh + args.gamma*(1-terPh)*QTarget.output)#check dimensions
-    qLoss = tf.reduce_mean((Q.output - targets)**2)
+    qLoss = tf.reduce_mean((Q.output - targets)**2) + tf.reduce_sum([0.01*tf.nn.l2_loss(trVar) for trVar in tf.trainable_variables(Q.variablesScope)])
     
     qOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_q).minimize(qLoss)
     policyParams = utils.get_vars("PolicyNetworkContinuousOrig")
@@ -115,14 +126,19 @@ with tf.Session(graph=graph) as sess:
     #algorithm
     finishedEp = 0
     step = 0
+    updates=0
     buffer = ReplayBuffer(args.buffer_size)
+
+    #sync target and 'normal' network
+    utils.polyak(QTarget, Q, 1, sess, False)
+    utils.polyak(policyTarget, policy, 1, sess, False)
     while step < args.total_train_steps:  
 
         obs, epLen, epRet, doSample = env.reset(), 0, 0, True
 
         #basicaly this is one episode because while exits when terminal state is reached or max number of steps(in episode or generaly) is reached
         while doSample:              
-            print("Step {}".format(step))
+            #print("Step {}".format(step))
             sampledAction, _, _, _ = policy.getSampledActions(np.expand_dims(obs, 0))      
             nextObs, reward, terminal, _ = env.step(sampledAction[0])  
             epLen += 1
@@ -133,7 +149,7 @@ with tf.Session(graph=graph) as sess:
 
             doSample = not terminal and epLen < args.max_episode_len and step < args.total_train_steps
             
-            if terminal and args.exp_name is not None:
+            if terminal and args.wandb_log:
                 summaryRet, summaryLen = sess.run([epRewSum, epLenSum], feed_dict = {epRewPh:epRet, epLenPh:epLen})
                 writer.add_summary(summaryRet, finishedEp)
                 writer.add_summary(summaryLen, finishedEp)                    
@@ -148,9 +164,15 @@ with tf.Session(graph=graph) as sess:
                 sess.run(qOptimizationStep, feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
                 sess.run(policyOptimizationStep, feed_dict={obsPh:observations})
 
-                utils.polyak(QTarget, Q, args.rho, sess, verbose=True)
-                utils.polyak(policyTarget, policy, args.rho, sess, verbose=True)
+                qLossNew, policyLossNew = sess.run([qLoss,policyLoss], feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
+                
+                summaryQ, summaryP = sess.run([QLossSum, policyLossSum], feed_dict = {QLossPh:qLossNew, policyLossPh:policyLossNew})
+                writer.add_summary(summaryQ, updates)
+                writer.add_summary(summaryP, updates)  
+                updates +=1
+                
+                utils.polyak(QTarget, Q, args.rho, sess, verbose=False)
+                utils.polyak(policyTarget, policy, args.rho, sess, verbose=False)
     
     writer.close()
     env.close()
-    

@@ -6,6 +6,9 @@ import tensorflow as tf
 import time
 import wandb
 
+import sys
+sys.path.append("../")
+
 import utils
 from networks import StateValueNetwork, PolicyNetworkDiscrete, PolicyNetworkContinuous
 from GAEBuffer import GAEBuffer
@@ -46,8 +49,8 @@ parser.add_argument('--max_episode_len', type=int, default=1000,
                    help="max length of one episode")
 parser.add_argument('--wandb_projet_name', type=str, default="trust-region-policy-optimization",
                    help="the wandb's project name")
-parser.add_argument('--exp_name', type=str, default=None,
-                   help='the name of this experiment')
+parser.add_argument('--wandb_log', type=bool, default=False,
+                   help='whether to log results to wandb')
 parser.add_argument('--play_every_nth_epoch', type=int, default=10,
                    help='every nth epoch will be rendered, set to epochs+1 not to render at all')
 args = parser.parse_args()
@@ -77,9 +80,10 @@ with tf.Session(graph=graph) as sess:
     SurrogateDiffSum = tf.summary.scalar('surrogate_function_value', SurrogateDiffPh)
     KLSum = tf.summary.scalar('kl_divergence', KLPh)  
             
-    if args.exp_name is not None:
+    if args.wandb_log:
         
-        experimentName = f"{args.gym_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+        implSuffix = "initital"
+        experimentName = f"{args.gym_id}__trpo_{implSuffix}__{args.seed}__{int(time.time())}"
         writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
         cnf = vars(args)
         cnf['action_space_type'] = 'discrete' if discreteActionsSpace else 'continuous'
@@ -89,7 +93,7 @@ with tf.Session(graph=graph) as sess:
         note = ""
         if(args.epoch_len > svfTrainInBatchesThreshold):
             note = "State value training split in batches of size {} because of too large number of samples".format(svfTrainInBatchesThreshold)
-        wandb.init(project=args.wandb_projet_name, config=cnf, name=args.exp_name, notes=note, tensorboard=True)
+        wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, notes=note, tensorboard=True)
     
     #definition of placeholders
     logProbSampPh = tf.placeholder(dtype = tf.float32, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
@@ -114,8 +118,9 @@ with tf.Session(graph=graph) as sess:
     V = StateValueNetwork(sess, inputLength, args.hidden_layers_state_value, args.learning_rate_state_value, obsPh) #this network has method for training, but it is never used. Instead, training is done outside of this class
     if(discreteActionsSpace):
         policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig") #policy network for discrete action space
-    else:      
-        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig", logStdInit=-0.5*np.ones(outputLength, dtype=np.float32))
+    else:          
+        policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [None]    
+        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=-0.5*np.ones((1,outputLength), dtype=np.float32))
       
     #definition of losses to optimize
     ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
@@ -181,7 +186,7 @@ with tf.Session(graph=graph) as sess:
                     #print("Cutting path. Either max episode length steps are done in current episode or epoch has finished")
                 val = 0 if terminal else V.forward(np.expand_dims(obs, 0))
                 buffer.finishPath(val)
-                if terminal and args.exp_name is not None:
+                if terminal and args.wandb_log:
                     summaryRet, summaryLen = sess.run([epRewSum, epLenSum], feed_dict = {epRewPh:epRet, epLenPh:epLen})
                     writer.add_summary(summaryRet, finishedEp)
                     writer.add_summary(summaryLen, finishedEp)                    
@@ -212,7 +217,7 @@ with tf.Session(graph=graph) as sess:
         
         oldParams = sess.run(getPolicyParams)
         
-        if args.exp_name is not None:
+        if args.wandb_log:
             wandb.config.policy_params = oldParams.shape[0]    
         
         for j in range(args.max_iters_line_search):
@@ -274,7 +279,7 @@ with tf.Session(graph=graph) as sess:
         
         print("\tState value loss in epoch {} calculated in {}".format(e, svLossEnd-svLossStart))
         
-        if args.exp_name is not None:       
+        if args.wandb_log:       
             summarySVm, summarySurrogateDiff, summaryKL = sess.run([SVLossSummary, SurrogateDiffSum, KLSum], feed_dict = {SVLossPh:SVLoss, SurrogateDiffPh:LlossNew - LlossOld, KLPh:kl})
             writer.add_summary(summarySVm, e)
             writer.add_summary(summarySurrogateDiff, e)
