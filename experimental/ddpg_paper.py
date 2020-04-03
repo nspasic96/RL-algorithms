@@ -17,7 +17,7 @@ parser = argparse.ArgumentParser(description='DDPG')
 
 parser.add_argument('--gym-id', type=str, default="HopperPyBulletEnv-v0",
                    help='the id of the gym environment')
-parser.add_argument('--seed', type=int, default=1,
+parser.add_argument('--seed', type=int,
                    help='seed of the experiment')
 parser.add_argument('--total_train_steps', type=int, default=2500000,
                    help="total number of steps to train")

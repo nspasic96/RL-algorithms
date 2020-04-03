@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser(description='PPO')
 
 parser.add_argument('--gym-id', type=str, default="HopperPyBulletEnv-v0",
                    help='the id of the gym environment')
-parser.add_argument('--seed', type=int, default=1,
+parser.add_argument('--seed', type=int,
                    help='seed of the experiment')
 parser.add_argument('--epochs', type=int, default=10,
                    help="epochs to train")
