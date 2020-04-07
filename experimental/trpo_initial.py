@@ -80,11 +80,12 @@ with tf.Session(graph=graph) as sess:
     SurrogateDiffSum = tf.summary.scalar('surrogate_function_value', SurrogateDiffPh)
     KLSum = tf.summary.scalar('kl_divergence', KLPh)  
             
+    implSuffix = "initital"
+    experimentName = f"{args.gym_id}__trpo_{implSuffix}__{args.seed}__{int(time.time())}"
+    writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
+    
     if args.wandb_log:
         
-        implSuffix = "initital"
-        experimentName = f"{args.gym_id}__trpo_{implSuffix}__{args.seed}__{int(time.time())}"
-        writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
         cnf = vars(args)
         cnf['action_space_type'] = 'discrete' if discreteActionsSpace else 'continuous'
         cnf['input_length'] = inputLength

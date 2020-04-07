@@ -77,7 +77,6 @@ class QNetwork:
 
     def _createDefault(self):
 
-        self.networkInput = tf.concat([self.input, self.action], axis = 1)
         if self.reuse is not None:
             with tf.variable_scope("QNetwork{}".format(self.reuse.suffix), reuse = True):
                 curNode = tf.layers.Dense(self.hiddenLayers[0], self.hiddenLayerActivations[0], use_bias = True, name="fc1")(self.input)

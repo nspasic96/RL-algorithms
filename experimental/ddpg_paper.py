@@ -75,10 +75,11 @@ with tf.Session(graph=graph) as sess:
     QLossSum = tf.summary.scalar('q_function_loss', QLossPh)
     policyLossSum = tf.summary.scalar('policy_function_value', policyLossPh)  
             
+    implSuffix = "experimental"
+    experimentName = f"{args.gym_id}__ddpg_{implSuffix}__{args.seed}__{int(time.time())}"
+    writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
+
     if args.wandb_log:
-        implSuffix = "experimental"
-        experimentName = f"{args.gym_id}__ddpg_{implSuffix}__{args.seed}__{int(time.time())}"
-        writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
         cnf = vars(args)
         cnf['action_space_type'] = 'continuous'
         cnf['input_length'] = inputLength
@@ -101,7 +102,7 @@ with tf.Session(graph=graph) as sess:
     logStdInit = np.log(args.eps)*np.ones(shape=(1,outputLength), dtype=np.float32)
 
     policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [tf.nn.tanh]
-    qActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [None]
+    qActivations = [tf.nn.relu for i in range(len(args.hidden_layers_q))] + [None]
 
     policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
     policyTarget = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, nextObsPh, aPh, "Target", logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
@@ -114,9 +115,18 @@ with tf.Session(graph=graph) as sess:
     targets = tf.stop_gradient(rewPh + args.gamma*(1-terPh)*QTarget.output)#check dimensions
     qLoss = tf.reduce_mean((Q.output - targets)**2) + tf.reduce_sum([0.01*tf.nn.l2_loss(trVar) for trVar in tf.trainable_variables(Q.variablesScope)])
     
-    qOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_q).minimize(qLoss)
+    qParams = utils.get_vars("QNetworkOrig")
+    qOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_q).minimize(qLoss, var_list = qParams)
     policyParams = utils.get_vars("PolicyNetworkContinuousOrig")
     policyOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_policy).minimize(policyLoss, var_list=policyParams)
+
+    print("\n\n")
+    print(qParams)
+    print("\n\n")
+    print(policyParams)    
+    print("\n\n")
+    print([trVar for trVar in tf.trainable_variables(Q.variablesScope)])  
+    print("\n\n")
 
     #tf session initialization
     init = tf.initialize_local_variables()
@@ -133,12 +143,13 @@ with tf.Session(graph=graph) as sess:
     utils.polyak(QTarget, Q, 1, sess, False)
     utils.polyak(policyTarget, policy, 1, sess, False)
     while step < args.total_train_steps:  
-
         obs, epLen, epRet, doSample = env.reset(), 0, 0, True
 
         #basicaly this is one episode because while exits when terminal state is reached or max number of steps(in episode or generaly) is reached
         while doSample:              
             #print("Step {}".format(step))
+            env.render()
+
             sampledAction, _, _, _ = policy.getSampledActions(np.expand_dims(obs, 0))      
             nextObs, reward, terminal, _ = env.step(sampledAction[0])  
             epLen += 1

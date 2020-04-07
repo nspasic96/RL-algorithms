@@ -78,10 +78,10 @@ with tf.Session(graph=graph) as sess:
     SVLossSummary = tf.summary.scalar('value_function_loss', SVLossPh)
     LlossOldSum = tf.summary.scalar('surrogate_function_value', LlossOldPh)    
     
+    implSuffix = "initial"
+    experimentName = f"{args.gym_id}__ppo_{implSuffix}__{args.seed}__{int(time.time())}"
+    writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
     if args.wandb_log:
-        implSuffix = "initial"
-        experimentName = f"{args.gym_id}__ppo_{implSuffix}__{args.seed}__{int(time.time())}"
-        writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
         cnf = vars(args)
         cnf['action_space_type'] = 'discrete' if discreteActionsSpace else 'continuous'
         cnf['input_length'] = inputLength
