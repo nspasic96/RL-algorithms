@@ -139,7 +139,6 @@ with tf.Session(graph=graph) as sess:
     QTargetUpdateOp = utils.polyak(QTarget, Q, args.rho, sess, verbose=False)
     policyTargetUpdateOp = utils.polyak(policyTarget, policy, args.rho, sess, verbose=False)
 
-    finishedEp % args.play_every_nth_epoch == 0
     while step < args.total_train_steps:  
 
         episodeStart = time.time()
@@ -163,11 +162,11 @@ with tf.Session(graph=graph) as sess:
 
             doSample = not terminal and epLen < args.max_episode_len and step < args.total_train_steps
             
-            if terminal and args.wandb_log:
+            if terminal:
+                finishedEp += 1
                 summaryRet, summaryLen = sess.run([epRewSum, epLenSum], feed_dict = {epRewPh:epRet, epLenPh:epLen})
                 writer.add_summary(summaryRet, finishedEp)
                 writer.add_summary(summaryLen, finishedEp)                    
-                finishedEp += 1
             
             step +=1          
             
