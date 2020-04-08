@@ -41,6 +41,8 @@ parser.add_argument('--update_after', type=int, default=1000,
                    help='number of samples in buffer before first update')
 parser.add_argument('--update_freq', type=int, default=50,
                    help='update networks every update_freq steps')
+parser.add_argument('--start_steps', type=int, default=10000,
+                   help='steps to perform random policy at start')
 parser.add_argument('--eps', type=float, default=0.1,
                    help='non trainable gaussian noise to add to mean action value')
 parser.add_argument('--max_episode_len', type=int, default=1000,
@@ -59,6 +61,7 @@ if not args.seed:
 graph = tf.Graph()
 with tf.Session(graph=graph) as sess:
     env = gym.make(args.gym_id)
+    env._max_episode_steps = args.max_episode_len #check whether this is ok!
     if utils.is_discrete(env):
         exit("DDPG can only be applied to continuous action space environments")
     
@@ -146,14 +149,18 @@ with tf.Session(graph=graph) as sess:
         obs, epLen, epRet, doSample = env.reset(), 0, 0, True
 
         #basicaly this is one episode because while exits when terminal state is reached or max number of steps(in episode or generaly) is reached
-        while doSample:              
-            if(finishedEp % args.play_every_nth_epoch == 0):
-                env.render()
-                _, _, sampledAction, _ = policy.getSampledActions(np.expand_dims(obs, 0))  
-            else:
-                sampledAction, _, _, _ = policy.getSampledActions(np.expand_dims(obs, 0))  
+        while doSample: 
 
-            nextObs, reward, terminal, _ = env.step(sampledAction[0])  
+            if step < args.start_steps:    
+                sampledAction = np.random.uniform(clip[0,:], clip[1,:], (1,outputLength))
+            else:         
+                if(finishedEp % args.play_every_nth_epoch == 0):
+                    env.render()
+                    _, _, sampledAction, _ = policy.getSampledActions(np.expand_dims(obs, 0))  
+                else:
+                    sampledAction, _, _, _ = policy.getSampledActions(np.expand_dims(obs, 0))  
+
+            nextObs, reward, terminal, _ = env.step(sampledAction[0])
             epLen += 1
             epRet += reward
 
@@ -162,7 +169,7 @@ with tf.Session(graph=graph) as sess:
 
             doSample = not terminal and epLen < args.max_episode_len and step < args.total_train_steps
             
-            if terminal:
+            if terminal: 
                 finishedEp += 1
                 summaryRet, summaryLen = sess.run([epRewSum, epLenSum], feed_dict = {epRewPh:epRet, epLenPh:epLen})
                 writer.add_summary(summaryRet, finishedEp)
