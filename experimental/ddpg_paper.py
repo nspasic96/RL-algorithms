@@ -120,14 +120,6 @@ with tf.Session(graph=graph) as sess:
     policyParams = utils.get_vars("PolicyNetworkContinuousOrig")
     policyOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_policy).minimize(policyLoss, var_list=policyParams)
 
-    print("\n\n")
-    print(qParams)
-    print("\n\n")
-    print(policyParams)    
-    print("\n\n")
-    print([trVar for trVar in tf.trainable_variables(Q.variablesScope)])  
-    print("\n\n")
-
     #tf session initialization
     init = tf.initialize_local_variables()
     init2 = tf.initialize_all_variables()
@@ -140,17 +132,28 @@ with tf.Session(graph=graph) as sess:
     buffer = ReplayBuffer(args.buffer_size)
 
     #sync target and 'normal' network
-    utils.polyak(QTarget, Q, 1, sess, False)
-    utils.polyak(policyTarget, policy, 1, sess, False)
+    sess.run(utils.polyak(QTarget, Q, 1, sess, False))
+    sess.run(utils.polyak(policyTarget, policy, 1, sess, False))
+
+    #get target update ops  
+    QTargetUpdateOp = utils.polyak(QTarget, Q, args.rho, sess, verbose=False)
+    policyTargetUpdateOp = utils.polyak(policyTarget, policy, args.rho, sess, verbose=False)
+
+    finishedEp % args.play_every_nth_epoch == 0
     while step < args.total_train_steps:  
+
+        episodeStart = time.time()
+
         obs, epLen, epRet, doSample = env.reset(), 0, 0, True
 
         #basicaly this is one episode because while exits when terminal state is reached or max number of steps(in episode or generaly) is reached
         while doSample:              
-            #print("Step {}".format(step))
-            env.render()
+            if(finishedEp % args.play_every_nth_epoch == 0):
+                env.render()
+                _, _, sampledAction, _ = policy.getSampledActions(np.expand_dims(obs, 0))  
+            else:
+                sampledAction, _, _, _ = policy.getSampledActions(np.expand_dims(obs, 0))  
 
-            sampledAction, _, _, _ = policy.getSampledActions(np.expand_dims(obs, 0))      
             nextObs, reward, terminal, _ = env.step(sampledAction[0])  
             epLen += 1
             epRet += reward
@@ -169,7 +172,7 @@ with tf.Session(graph=graph) as sess:
             step +=1          
             
             #time for update
-            if step > args.update_after and step % args.update_freq == 0:           
+            if step > args.update_after and step % args.update_freq == 0 and finishedEp % args.play_every_nth_epoch > 0:           
                 observations, actions, rewards, nextObservations, terminals = buffer.sample(args.batch_size)                
 
                 sess.run(qOptimizationStep, feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
@@ -182,8 +185,11 @@ with tf.Session(graph=graph) as sess:
                 writer.add_summary(summaryP, updates)  
                 updates +=1
                 
-                utils.polyak(QTarget, Q, args.rho, sess, verbose=False)
-                utils.polyak(policyTarget, policy, args.rho, sess, verbose=False)
+                sess.run(QTargetUpdateOp)
+                sess.run(policyTargetUpdateOp)
+        
+        episodeEnd = time.time()
+        print("Episode {} took {}s for {} steps".format(finishedEp , episodeEnd - episodeStart, epLen))
     
     writer.close()
     env.close()

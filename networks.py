@@ -73,21 +73,22 @@ class QNetwork:
         self.action = actionPh
         self.attachActionLayer = attachActionLayer #to which hidden layer to attach action(0 based indexed)
         self.reuse = reuse
+        if len(hiddenLaySizes) <= attachActionLayer:
+            print("\nattachActionLayer={} outside of network({} hidden layers)\n".format(attachActionLayer, len(hiddenLayerActivations))) 
         self._createDefault()
 
     def _createDefault(self):
-
         if self.reuse is not None:
             with tf.variable_scope("QNetwork{}".format(self.reuse.suffix), reuse = True):
                 curNode = tf.layers.Dense(self.hiddenLayers[0], self.hiddenLayerActivations[0], use_bias = True, name="fc1")(self.input)
                 if(self.attachActionLayer == 0):
                     curNode = tf.concat([curNode, self.action], axis = 1)
                 for i,l in enumerate(self.hiddenLayers[1:]):
-                    curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i], use_bias = True,  name="fc{}".format(i+2))(curNode)
+                    curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i+1], use_bias = True,  name="fc{}".format(i+2))(curNode)
                     if(self.attachActionLayer == i+1):
-                        curNode = tf.concat([curNode, self.action], axis = 1)
+                        curNode = tf.concat([curNode, self.action], axis = 1, name="QNetworkActionConcat")
                 
-                self.output = tf.layers.Dense(1, use_bias = False, name="output")(curNode)
+                self.output = tf.layers.Dense(1, self.hiddenLayerActivations[-1], use_bias = False, name="output")(curNode)
                 self.variablesScope = "QNetwork{}".format(self.reuse.suffix) 
         else:   
             with tf.variable_scope("QNetwork{}".format(self.suffix)): 
@@ -95,11 +96,11 @@ class QNetwork:
                 if(self.attachActionLayer == 0):
                     curNode = tf.concat([curNode, self.action], axis = 1)
                 for i,l in enumerate(self.hiddenLayers[1:]):
-                    curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i], use_bias = True,  name="fc{}".format(i+2))(curNode)
+                    curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i+1], use_bias = True,  name="fc{}".format(i+2))(curNode)
                     if(self.attachActionLayer == i+1):
-                        curNode = tf.concat([curNode, self.action], axis = 1)
+                        curNode = tf.concat([curNode, self.action], axis = 1, name="QNetworkActionConcat")
                 
-                self.output = tf.layers.Dense(1, use_bias = False, name="output")(curNode)
+                self.output = tf.layers.Dense(1, self.hiddenLayerActivations[-1], use_bias = False, name="output")(curNode)
                 self.variablesScope = "QNetwork{}".format(self.suffix) 
                    
     def forward(self, observations):        
@@ -166,8 +167,8 @@ class PolicyNetworkContinuous:
         with tf.variable_scope("PolicyNetworkContinuous{}".format(self.suffix)):
             curNode = tf.layers.Dense(self.hiddenLayers[0], self.hiddenLayerActivations[0], use_bias = True,  name="fc1")(self.input)
             for i,l in enumerate(self.hiddenLayers[1:]):
-                curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i], use_bias = True,  name="fc{}".format(i+2))(curNode)
-            self.actionMean = tf.layers.Dense(self.outputLength, use_bias = True,  name="ActionsMean")(curNode)
+                curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i+1], use_bias = True,  name="fc{}".format(i+2))(curNode)
+            self.actionMean = tf.layers.Dense(self.outputLength, self.hiddenLayerActivations[-1], use_bias = True,  name="ActionsMean")(curNode)
             if self.logStdInit is not None:
                 assert(self.logStdInit.shape == (1,self.outputLength)) 
                 self.actionLogStd = tf.get_variable(name="ActionsLogStdDetached{}Trainable".format("" if self.logStdTrainable else "Non"), initializer=self.logStdInit, trainable=self.logStdTrainable)
@@ -197,6 +198,7 @@ class PolicyNetworkContinuous:
                            
     def getSampledActions(self, observations):
         return self.sess.run([self.actionFinal, self.sampledLogProbs, self.actionMean, self.actionLogStd], feed_dict = {self.input : observations})
+
          
         
 class SoftQNetwork:

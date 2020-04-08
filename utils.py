@@ -180,5 +180,5 @@ def polyak(dst, src, rho, session, verbose):
         newVal = rho*var+(1-rho)*dstVar
         assignOps.append(tf.assign(dstVar, newVal))
     
-    session.run(assignOps)
+    return assignOps
     
