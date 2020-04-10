@@ -63,6 +63,11 @@ graph = tf.Graph()
 with tf.Session(graph=graph) as sess:
     
     env = gym.make(args.gym_id)
+    np.random.seed(args.seed)
+    env.seed(args.seed)
+    env.action_space.seed(args.seed)
+    env.observation_space.seed(args.seed)
+    
     discreteActionsSpace = utils.is_discrete(env)
     
     inputLength = env.observation_space.shape[0]

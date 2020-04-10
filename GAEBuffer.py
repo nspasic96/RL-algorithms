@@ -10,10 +10,7 @@ class GAEBuffer:
         self.lamb = lamb
 
         self.obsBuff = np.zeros((size, obsLen))
-        if(actLen > 1):
-            self.actBuff = np.zeros((size, actLen))
-        else:            
-            self.actBuff = np.zeros(size)
+        self.actBuff = np.zeros((size, actLen))
         self.predValsBuff = np.zeros(size)
         self.samLogProbBuff = np.zeros(size)
         self.rewardsBuff = np.zeros(size)

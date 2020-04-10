@@ -60,7 +60,13 @@ if not args.seed:
     
 graph = tf.Graph()
 with tf.Session(graph=graph) as sess:
-    env = gym.make(args.gym_id)
+
+    env = gym.make(args.gym_id)    
+    np.random.seed(args.seed)
+    env.seed(args.seed)
+    env.action_space.seed(args.seed)
+    env.observation_space.seed(args.seed)
+    
     env._max_episode_steps = args.max_episode_len #check whether this is ok!
     if utils.is_discrete(env):
         exit("DDPG can only be applied to continuous action space environments")
@@ -116,7 +122,7 @@ with tf.Session(graph=graph) as sess:
     #definition of losses to optimize
     policyLoss = -tf.reduce_mean(QAux.output)# - sign because we want to maximize our objective    
     targets = tf.stop_gradient(rewPh + args.gamma*(1-terPh)*QTarget.output)#check dimensions
-    qLoss = tf.reduce_mean((Q.output - targets)**2) + tf.reduce_sum([0.01*tf.nn.l2_loss(trVar) for trVar in tf.trainable_variables(Q.variablesScope)])
+    qLoss = tf.reduce_mean((Q.output - targets)**2) + tf.reduce_sum([0.02*tf.nn.l2_loss(trVar) for trVar in tf.trainable_variables(Q.variablesScope)])
     
     qParams = utils.get_vars("QNetworkOrig")
     qOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_q).minimize(qLoss, var_list = qParams)

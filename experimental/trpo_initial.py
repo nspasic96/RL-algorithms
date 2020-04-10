@@ -56,24 +56,32 @@ parser.add_argument('--play_every_nth_epoch', type=int, default=10,
 args = parser.parse_args()
 
 svfTrainInBatchesThreshold = 5000
+dtype = tf.float32
+dtypeNp = np.float32
 
 if not args.seed:
     args.seed = int(time.time())
-    
+ 
 graph = tf.Graph()
 with tf.Session(graph=graph) as sess:
-    env = gym.make(args.gym_id)
+
+    env = gym.make(args.gym_id)        
+    np.random.seed(args.seed)
+    env.seed(args.seed)
+    env.action_space.seed(args.seed)
+    env.observation_space.seed(args.seed)
+
     discreteActionsSpace = utils.is_discrete(env)
     
     inputLength = env.observation_space.shape[0]
     outputLength = env.action_space.n if discreteActionsSpace else env.action_space.shape[0]
     
     #summeries placeholders and summery scalar objects
-    epRewPh = tf.placeholder(tf.float32, shape=None, name='episode_reward_summary')
-    epLenPh = tf.placeholder(tf.float32, shape=None, name='episode_length_summary')
-    SVLossPh = tf.placeholder(tf.float32, shape=None, name='value_function_loss_summary')
-    SurrogateDiffPh = tf.placeholder(tf.float32, shape=None, name='surrogate_function_value_summary')
-    KLPh = tf.placeholder(tf.float32, shape=None, name='kl_divergence_summary')
+    epRewPh = tf.placeholder(dtype, shape=None, name='episode_reward_summary')
+    epLenPh = tf.placeholder(dtype, shape=None, name='episode_length_summary')
+    SVLossPh = tf.placeholder(dtype, shape=None, name='value_function_loss_summary')
+    SurrogateDiffPh = tf.placeholder(dtype, shape=None, name='surrogate_function_value_summary')
+    KLPh = tf.placeholder(dtype, shape=None, name='kl_divergence_summary')
     epRewSum = tf.summary.scalar('episode_reward', epRewPh)
     epLenSum = tf.summary.scalar('episode_length', epLenPh)
     SVLossSummary = tf.summary.scalar('value_function_loss', SVLossPh)
@@ -97,20 +105,20 @@ with tf.Session(graph=graph) as sess:
         wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, notes=note, tensorboard=True)
     
     #definition of placeholders
-    logProbSampPh = tf.placeholder(dtype = tf.float32, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
-    advPh = tf.placeholder(dtype = tf.float32, shape=[None], name="advantages") #advantages obtained using GAE-lambda and values obtainet from StateValueNetwork V
-    returnsPh = tf.placeholder(dtype = tf.float32, shape=[None], name="returns") #total discounted cumulative reward
-    policyParamsFlatten= tf.placeholder(dtype = tf.float32, shape=[None], name = "policyParams") #policy params flatten, used in assingment of pi params in line search algorithm
-    obsPh = tf.placeholder(dtype=tf.float32, shape=[None, inputLength], name="observations") #observations
+    logProbSampPh = tf.placeholder(dtype = dtype, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
+    advPh = tf.placeholder(dtype = dtype, shape=[None], name="advantages") #advantages obtained using GAE-lambda and values obtainet from StateValueNetwork V
+    returnsPh = tf.placeholder(dtype = dtype, shape=[None], name="returns") #total discounted cumulative reward
+    policyParamsFlatten= tf.placeholder(dtype = dtype, shape=[None], name = "policyParams") #policy params flatten, used in assingment of pi params in line search algorithm
+    obsPh = tf.placeholder(dtype=dtype, shape=[None, inputLength], name="observations") #observations
     
     if discreteActionsSpace:
         aPh = tf.placeholder(dtype=tf.int32, shape=[None], name="actions") #actions taken
-        logProbsAllPh = tf.placeholder(dtype= tf.float32, shape=[None, outputLength], name="logProbsAll") #log probabilities of all actions according to sampling distribution (pi_old)
+        logProbsAllPh = tf.placeholder(dtype= dtype, shape=[None, outputLength], name="logProbsAll") #log probabilities of all actions according to sampling distribution (pi_old)
         additionalInfoLengths = [outputLength]
     else:
-        aPh = tf.placeholder(dtype=tf.float32, shape=[None,outputLength], name="actions")
-        oldActionMeanPh = tf.placeholder(dtype=tf.float32, shape=[None,outputLength], name="actionsMeanOld")
-        oldActionLogStdPh = tf.placeholder(dtype=tf.float32, shape=[None,outputLength], name="actionsLogStdOld") 
+        aPh = tf.placeholder(dtype=dtype, shape=[None,outputLength], name="actions")
+        oldActionMeanPh = tf.placeholder(dtype=dtype, shape=[None,outputLength], name="actionsMeanOld")
+        oldActionLogStdPh = tf.placeholder(dtype=dtype, shape=[None,outputLength], name="actionsLogStdOld") 
         additionalInfoLengths = [outputLength, outputLength]
     
     buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, additionalInfoLengths)
@@ -120,8 +128,8 @@ with tf.Session(graph=graph) as sess:
     if(discreteActionsSpace):
         policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig") #policy network for discrete action space
     else:          
-        policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [None]    
-        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=-0.5*np.ones((1,outputLength), dtype=np.float32))
+        policyActivations = [None for i in range(len(args.hidden_layers_policy))] + [None]    
+        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=-0.5*np.ones((1,outputLength), dtype=dtypeNp), logStdTrainable=False)
       
     #definition of losses to optimize
     ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
@@ -136,9 +144,9 @@ with tf.Session(graph=graph) as sess:
     svfOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_state_value).minimize(stateValueLoss)
     
     #other ops
-    suffix = "Continuous"
+    suffix = "ContinuousOrig"
     if discreteActionsSpace:
-        suffix = "Discrete"
+        suffix = "DiscreteOrig"
     policyParams = utils.get_vars("PolicyNetwork"+ suffix)
     getPolicyParams = utils.flat_concat(policyParams)
     setPolicyParams = utils.assign_params_from_flat(policyParamsFlatten, policyParams)
@@ -177,7 +185,6 @@ with tf.Session(graph=graph) as sess:
             nextObs, reward, terminal, _ = env.step(sampledAction[0])  
             epLen += 1
             epRet += reward
-    
             buffer.add(obs, sampledAction[0], predictedV[0][0], logProbSampledAction, reward, additionalInfos)
             obs = nextObs
     
@@ -205,15 +212,13 @@ with tf.Session(graph=graph) as sess:
             Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, logProbsAllPh : additionalInfos[0], obsPh : observations})
         else:
             Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1], obsPh : observations})
-            
+
         grad = sess.run(utils.flat_grad(Lloss, policyParams), feed_dict = { obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb})#, logProbsAllPh : allLogProbs})
         cjStart = time.time()
         newDir = utils.conjugate_gradients(Hx, grad, args.cg_iters)    
         cjEnd = time.time()
-        print("\t\tConjugate gradient in epoch {} done in {}".format(e, cjEnd-cjStart)) 
         
         LlossOld = sess.run(Lloss , feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb})#, logProbsAllPh : allLogProbs})#L function inputs: observations, advantages estimated, logProb of sampled action, logProbsOfAllActions              
-        
         coef = np.sqrt(2*args.delta/(np.dot(np.transpose(newDir),Hx(newDir)) + 1e-8))
         
         oldParams = sess.run(getPolicyParams)
