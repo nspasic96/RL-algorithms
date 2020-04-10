@@ -66,8 +66,9 @@ with tf.Session(graph=graph) as sess:
     env.seed(args.seed)
     env.action_space.seed(args.seed)
     env.observation_space.seed(args.seed)
+    tf.set_random_seed(args.seed)
     
-    env._max_episode_steps = args.max_episode_len #check whether this is ok!
+    #env._max_episode_steps = args.max_episode_len #check whether this is ok!
     if utils.is_discrete(env):
         exit("DDPG can only be applied to continuous action space environments")
     
@@ -107,14 +108,16 @@ with tf.Session(graph=graph) as sess:
     clip = np.zeros(shape=(2,outputLength))
     clip[0,:] = env.action_space.low
     clip[1,:] = env.action_space.high
-    #print("CLIP = {}".format(clip))
+    print("CLIP = {}".format(clip))
+    print(env.action_space.high[0])
+    print("\n\n")
     logStdInit = np.log(args.eps)*np.ones(shape=(1,outputLength), dtype=np.float32)
 
     policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [tf.nn.tanh]
     qActivations = [tf.nn.relu for i in range(len(args.hidden_layers_q))] + [None]
 
-    policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
-    policyTarget = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, nextObsPh, aPh, "Target", logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
+    policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
+    policyTarget = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, nextObsPh, aPh, "Target", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
     Q = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh, aPh, 1, suffix="Orig") # original Q network
     QAux = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh,  policy.actionFinal, 1, suffix="Aux", reuse=Q) # network with parameters same as original Q network, but instead of action placeholder it takse output from current policy
     QTarget = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, nextObsPh, policyTarget.actionFinal, 1, suffix="Target") #target Q network, instead of action placeholder it takse output from target policy
@@ -159,12 +162,8 @@ with tf.Session(graph=graph) as sess:
 
             if step < args.start_steps:    
                 sampledAction = np.random.uniform(clip[0,:], clip[1,:], (1,outputLength))
-            else:         
-                if(finishedEp % args.play_every_nth_epoch == 0):
-                    env.render()
-                    _, _, sampledAction, _ = policy.getSampledActions(np.expand_dims(obs, 0))  
-                else:
-                    sampledAction, _, _, _ = policy.getSampledActions(np.expand_dims(obs, 0))  
+            else:
+                sampledAction, _, _, _ = policy.getSampledActions(np.expand_dims(obs, 0))  
 
             nextObs, reward, terminal, _ = env.step(sampledAction[0])
             epLen += 1
@@ -175,30 +174,45 @@ with tf.Session(graph=graph) as sess:
 
             doSample = not terminal and epLen < args.max_episode_len and step < args.total_train_steps
             
-            if terminal: 
+            step +=1  
+
+            if terminal or epLen == args.max_episode_len : 
                 finishedEp += 1
                 summaryRet, summaryLen = sess.run([epRewSum, epLenSum], feed_dict = {epRewPh:epRet, epLenPh:epLen})
                 writer.add_summary(summaryRet, finishedEp)
-                writer.add_summary(summaryLen, finishedEp)                    
+                writer.add_summary(summaryLen, finishedEp)  
+
+                #test deterministic agent
+                if(finishedEp % args.play_every_nth_epoch == 0):
+                    for _ in range(args.max_episode_len):
+                        env.render()
+                        osbTest = env.reset()
+                        _, _, sampledActionTest, _ = policy.getSampledActions(np.expand_dims(osbTest, 0))  
+                        nextOsbTest, _, terminalTest, _ = env.step(sampledActionTest[0])
+                        osbTest = nextOsbTest
+                        if terminalTest:
+                            break
+
             
-            step +=1          
             
             #time for update
-            if step > args.update_after and step % args.update_freq == 0 and finishedEp % args.play_every_nth_epoch > 0:           
-                observations, actions, rewards, nextObservations, terminals = buffer.sample(args.batch_size)                
+            if step > args.update_after and step % args.update_freq == 0:   
 
-                sess.run(qOptimizationStep, feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
-                sess.run(policyOptimizationStep, feed_dict={obsPh:observations})
+                for _ in range(args.update_freq):        
+                    observations, actions, rewards, nextObservations, terminals = buffer.sample(args.batch_size)                
 
-                qLossNew, policyLossNew = sess.run([qLoss,policyLoss], feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
-                
-                summaryQ, summaryP = sess.run([QLossSum, policyLossSum], feed_dict = {QLossPh:qLossNew, policyLossPh:policyLossNew})
-                writer.add_summary(summaryQ, updates)
-                writer.add_summary(summaryP, updates)  
-                updates +=1
-                
-                sess.run(QTargetUpdateOp)
-                sess.run(policyTargetUpdateOp)
+                    sess.run(qOptimizationStep, feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
+                    sess.run(policyOptimizationStep, feed_dict={obsPh:observations})
+
+                    qLossNew, policyLossNew = sess.run([qLoss,policyLoss], feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
+                    
+                    summaryQ, summaryP = sess.run([QLossSum, policyLossSum], feed_dict = {QLossPh:qLossNew, policyLossPh:policyLossNew})
+                    writer.add_summary(summaryQ, updates)
+                    writer.add_summary(summaryP, updates)  
+                    updates +=1
+                    
+                    sess.run(QTargetUpdateOp)
+                    sess.run(policyTargetUpdateOp)
         
         episodeEnd = time.time()
         print("Episode {} took {}s for {} steps".format(finishedEp , episodeEnd - episodeStart, epLen))

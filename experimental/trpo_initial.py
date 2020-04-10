@@ -70,6 +70,7 @@ with tf.Session(graph=graph) as sess:
     env.seed(args.seed)
     env.action_space.seed(args.seed)
     env.observation_space.seed(args.seed)
+    tf.set_random_seed(args.seed)
 
     discreteActionsSpace = utils.is_discrete(env)
     
@@ -128,7 +129,7 @@ with tf.Session(graph=graph) as sess:
     if(discreteActionsSpace):
         policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig") #policy network for discrete action space
     else:          
-        policyActivations = [None for i in range(len(args.hidden_layers_policy))] + [None]    
+        policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [None]    
         policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=-0.5*np.ones((1,outputLength), dtype=dtypeNp), logStdTrainable=False)
       
     #definition of losses to optimize

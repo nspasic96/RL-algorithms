@@ -88,7 +88,7 @@ class QNetwork:
                     if(self.attachActionLayer == i+1):
                         curNode = tf.concat([curNode, self.action], axis = 1, name="QNetworkActionConcat")
                 
-                self.output = tf.layers.Dense(1, self.hiddenLayerActivations[-1], use_bias = False, name="output")(curNode)
+                self.output = tf.squeeze(tf.layers.Dense(1, self.hiddenLayerActivations[-1], use_bias = False, name="output")(curNode),axis=1)
                 self.variablesScope = "QNetwork{}".format(self.reuse.suffix) 
         else:   
             with tf.variable_scope("QNetwork{}".format(self.suffix)): 
@@ -100,7 +100,7 @@ class QNetwork:
                     if(self.attachActionLayer == i+1):
                         curNode = tf.concat([curNode, self.action], axis = 1, name="QNetworkActionConcat")
                 
-                self.output = tf.layers.Dense(1, self.hiddenLayerActivations[-1], use_bias = False, name="output")(curNode)
+                self.output = tf.squeeze(tf.layers.Dense(1, self.hiddenLayerActivations[-1], use_bias = False, name="output")(curNode),axis=1)
                 self.variablesScope = "QNetwork{}".format(self.suffix) 
                    
     def forward(self, observations):        
@@ -143,7 +143,7 @@ class PolicyNetworkDiscrete:
 
 class PolicyNetworkContinuous:
     
-    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, hiddenLayerActivations, inputPh, actionsPh, suffix, logStdInit=None, logStdTrainable=True, clipLogStd=None, actionClip=None, squashAction=False):
+    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, hiddenLayerActivations, inputPh, actionsPh, suffix, actionMeanScale=None, logStdInit=None, logStdTrainable=True, clipLogStd=None, actionClip=None, squashAction=False):
         self.inputLength = inputLength
         self.outputLength = outputLength
         self.input = inputPh
@@ -155,6 +155,7 @@ class PolicyNetworkContinuous:
         self.i = 0
         self.clipLogStd = clipLogStd
         self.actionClip = actionClip
+        self.actionMeanScale = actionMeanScale
         self.logStdInit = logStdInit
         #this applies only if logStds in not None
         self.logStdTrainable = logStdTrainable
@@ -169,6 +170,10 @@ class PolicyNetworkContinuous:
             for i,l in enumerate(self.hiddenLayers[1:]):
                 curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i+1], use_bias = True,  name="fc{}".format(i+2))(curNode)
             self.actionMean = tf.layers.Dense(self.outputLength, self.hiddenLayerActivations[-1], use_bias = True,  name="ActionsMean")(curNode)
+            if(self.actionMeanScale is not None):
+                assert(self.actionMeanScale.shape == (1,self.outputLength))
+                self.actionMean = self.actionMean * self.actionMeanScale
+
             if self.logStdInit is not None:
                 assert(self.logStdInit.shape == (1,self.outputLength)) 
                 self.actionLogStd = tf.get_variable(name="ActionsLogStdDetached{}Trainable".format("" if self.logStdTrainable else "Non"), initializer=self.logStdInit, trainable=self.logStdTrainable)
