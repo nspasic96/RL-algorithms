@@ -113,7 +113,7 @@ with tf.Session(graph=graph) as sess:
     obsPh = tf.placeholder(dtype=dtype, shape=[None, inputLength], name="observations") #observations
     
     if discreteActionsSpace:
-        aPh = tf.placeholder(dtype=tf.int32, shape=[None], name="actions") #actions taken
+        aPh = tf.placeholder(dtype=tf.int32, shape=[None,1], name="actions") #actions taken
         logProbsAllPh = tf.placeholder(dtype= dtype, shape=[None, outputLength], name="logProbsAll") #log probabilities of all actions according to sampling distribution (pi_old)
         additionalInfoLengths = [outputLength]
     else:

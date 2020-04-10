@@ -134,7 +134,7 @@ class PolicyNetworkDiscrete:
             self.sampledActions = tf.squeeze(tf.random.categorical(self.logProbs, 1), axis=1)
             self.sampledLogProbs = tf.reduce_sum(tf.one_hot(self.sampledActions, depth = self.outputLength)*self.logProbs)
             
-            self.logProbWithCurrParams = tf.reduce_sum(tf.one_hot(self.actions, depth=self.outputLength)*self.logProbs, axis=1)#log probs for actions given the observation(both fed with placeholder)
+            self.logProbWithCurrParams = tf.reduce_sum(tf.one_hot(tf.squeeze(self.actions,1), depth=self.outputLength)*self.logProbs, axis=1)#log probs for actions given the observation(both fed with placeholder)
             
             
     def getSampledActions(self, inputs):                      
