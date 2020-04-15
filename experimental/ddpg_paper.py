@@ -116,16 +116,17 @@ with tf.Session(graph=graph) as sess:
     policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [tf.nn.tanh]
     qActivations = [tf.nn.relu for i in range(len(args.hidden_layers_q))] + [None]
 
+    hiddenLayerMergeWithAction = 0
     policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
     policyTarget = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, nextObsPh, aPh, "Target", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
-    Q = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh, aPh, 1, suffix="Orig") # original Q network
-    QAux = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh,  policy.actionFinal, 1, suffix="Aux", reuse=Q) # network with parameters same as original Q network, but instead of action placeholder it takse output from current policy
-    QTarget = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, nextObsPh, policyTarget.actionFinal, 1, suffix="Target") #target Q network, instead of action placeholder it takse output from target policy
+    Q = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh, aPh, hiddenLayerMergeWithAction, suffix="Orig") # original Q network
+    QAux = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh,  policy.actionFinal, hiddenLayerMergeWithAction, suffix="Aux", reuse=Q) # network with parameters same as original Q network, but instead of action placeholder it takse output from current policy
+    QTarget = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, nextObsPh, policyTarget.actionFinal, hiddenLayerMergeWithAction, suffix="Target") #target Q network, instead of action placeholder it takse output from target policy
 
     #definition of losses to optimize
     policyLoss = -tf.reduce_mean(QAux.output)# - sign because we want to maximize our objective    
-    targets = tf.stop_gradient(rewPh + args.gamma*(1-terPh)*QTarget.output)#check dimensions
-    qLoss = tf.reduce_mean((Q.output - targets)**2) + tf.reduce_sum([0.02*tf.nn.l2_loss(trVar) for trVar in tf.trainable_variables(Q.variablesScope)])
+    targets = tf.stop_gradient(rewPh + args.gamma*(1-terPh)*QTarget.output)
+    qLoss = tf.reduce_mean((Q.output - targets)**2)# + tf.reduce_sum([0.02*tf.nn.l2_loss(trVar) for trVar in tf.trainable_variables(Q.variablesScope)])
     
     qParams = utils.get_vars("QNetworkOrig")
     qOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_q).minimize(qLoss, var_list = qParams)
@@ -161,7 +162,7 @@ with tf.Session(graph=graph) as sess:
         while doSample: 
 
             if step < args.start_steps:    
-                sampledAction = np.random.uniform(clip[0,:], clip[1,:], (1,outputLength))
+                sampledAction = np.asarray([env.action_space.sample()])
             else:
                 sampledAction, _, _, _ = policy.getSampledActions(np.expand_dims(obs, 0))  
 
@@ -204,7 +205,7 @@ with tf.Session(graph=graph) as sess:
                     sess.run(qOptimizationStep, feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
                     sess.run(policyOptimizationStep, feed_dict={obsPh:observations})
 
-                    qLossNew, policyLossNew = sess.run([qLoss,policyLoss], feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
+                    qLossNew, policyLossNew = sess.run([qLoss, policyLoss], feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
                     
                     summaryQ, summaryP = sess.run([QLossSum, policyLossSum], feed_dict = {QLossPh:qLossNew, policyLossPh:policyLossNew})
                     writer.add_summary(summaryQ, updates)
