@@ -182,3 +182,8 @@ def polyak(dst, src, rho, session, verbose):
     
     return assignOps
     
+def annealedNoise(start, end, stepsToAnneal, currStep):
+    k = (start - end) / stepsToAnneal
+    if currStep > stepsToAnneal:
+        return end
+    return end + k * (stepsToAnneal - currStep)

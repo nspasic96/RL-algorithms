@@ -12,6 +12,7 @@ sys.path.append("../")
 import utils
 from networks import QNetwork, PolicyNetworkContinuous
 from ReplayBuffer import ReplayBuffer
+from Histogram import Histogram
 
 parser = argparse.ArgumentParser(description='DDPG')
 
@@ -43,14 +44,20 @@ parser.add_argument('--update_freq', type=int, default=50,
                    help='update networks every update_freq steps')
 parser.add_argument('--start_steps', type=int, default=10000,
                    help='steps to perform random policy at start')
-parser.add_argument('--eps', type=float, default=0.1,
-                   help='non trainable gaussian noise to add to mean action value')
+parser.add_argument('--eps_start', type=float, default=0.2,
+                   help='start gaussian noise to add to mean action value')
+parser.add_argument('--eps_end', type=float, default=0.05,
+                   help='end gaussian noise to add to mean action value')
+parser.add_argument('--steps_to_decrease', type=int, default=1000000,
+                   help='steps to anneal noise from start to end')
 parser.add_argument('--max_episode_len', type=int, default=1000,
                    help="max length of one episode")
 parser.add_argument('--wandb_projet_name', type=str, default="deep-deterministic-policy-gradients",
                    help="the wandb's project name")
 parser.add_argument('--wandb_log', type=bool, default=False,
                    help='whether to log results to wandb')
+parser.add_argument('--plot_histograms', type=bool, default=True,
+                   help='whether to log histograms for actions and observations')
 parser.add_argument('--play_every_nth_epoch', type=int, default=10,
                    help='every nth epoch will be rendered, set to epochs+1 not to render at all')
 args = parser.parse_args()
@@ -111,14 +118,13 @@ with tf.Session(graph=graph) as sess:
     print("CLIP = {}".format(clip))
     print(env.action_space.high[0])
     print("\n\n")
-    logStdInit = np.log(args.eps)*np.ones(shape=(1,outputLength), dtype=np.float32)
 
     policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [tf.nn.tanh]
     qActivations = [tf.nn.relu for i in range(len(args.hidden_layers_q))] + [None]
 
     hiddenLayerMergeWithAction = 0
-    policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
-    policyTarget = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, nextObsPh, aPh, "Target", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=logStdInit, logStdTrainable=False, actionClip=clip)
+    policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=-float("infinity"), logStdTrainable=False, actionClip=clip)
+    policyTarget = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, nextObsPh, aPh, "Target", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=-float("infinity"), logStdTrainable=False, actionClip=clip)
     Q = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh, aPh, hiddenLayerMergeWithAction, suffix="Orig") # original Q network
     QAux = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh,  policy.actionFinal, hiddenLayerMergeWithAction, suffix="Aux", reuse=Q) # network with parameters same as original Q network, but instead of action placeholder it takse output from current policy
     QTarget = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, nextObsPh, policyTarget.actionFinal, hiddenLayerMergeWithAction, suffix="Target") #target Q network, instead of action placeholder it takse output from target policy
@@ -144,6 +150,13 @@ with tf.Session(graph=graph) as sess:
     updates=0
     buffer = ReplayBuffer(args.buffer_size)
 
+    if args.plot_histograms:
+        histSize = 10000
+
+        histograms = []
+        histograms.append(Histogram(histSize, inputLength, "observation"))
+        histograms.append(Histogram(histSize, outputLength, "action"))
+
     #sync target and 'normal' network
     sess.run(utils.polyak(QTarget, Q, 1, sess, False))
     sess.run(utils.polyak(policyTarget, policy, 1, sess, False))
@@ -164,7 +177,11 @@ with tf.Session(graph=graph) as sess:
             if step < args.start_steps:    
                 sampledAction = np.asarray([env.action_space.sample()])
             else:
-                sampledAction, _, _, _ = policy.getSampledActions(np.expand_dims(obs, 0))  
+                noise = utils.annealedNoise(args.eps_start, args.eps_end, args.steps_to_decrease, step)
+                sampledAction, _, = policy.getSampledActions(np.expand_dims(obs, 0)) + np.ones((1,outputLength))*noise
+
+            histograms[0].addValue(np.expand_dims(obs, 0))
+            histograms[1].addValue(sampledAction)
 
             nextObs, reward, terminal, _ = env.step(sampledAction[0])
             epLen += 1
@@ -188,13 +205,11 @@ with tf.Session(graph=graph) as sess:
                     for _ in range(args.max_episode_len):
                         env.render()
                         osbTest = env.reset()
-                        _, _, sampledActionTest, _ = policy.getSampledActions(np.expand_dims(osbTest, 0))  
+                        sampledActionTest, _ = policy.getSampledActions(np.expand_dims(osbTest, 0))  
                         nextOsbTest, _, terminalTest, _ = env.step(sampledActionTest[0])
                         osbTest = nextOsbTest
                         if terminalTest:
-                            break
-
-            
+                            break           
             
             #time for update
             if step > args.update_after and step % args.update_freq == 0:   
@@ -216,6 +231,22 @@ with tf.Session(graph=graph) as sess:
                     sess.run(policyTargetUpdateOp)
         
         episodeEnd = time.time()
+
+        if args.plot_histograms:
+            feedD = {}
+            total =0
+            histSummaries = []
+            for hist in histograms:
+                values = hist.getValues()
+                for i in range(hist.dimensions):
+                    feedD[hist.phs[i]] = values[i]
+                total += hist.dimensions
+                histSummaries.extend(hist.summaries)
+
+            summEval = sess.run(histSummaries, feed_dict = feedD)
+            for i in range(total):
+                writer.add_summary(summEval[i], global_step =finishedEp)
+
         print("Episode {} took {}s for {} steps".format(finishedEp , episodeEnd - episodeStart, epLen))
     
     writer.close()

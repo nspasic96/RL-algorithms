@@ -175,17 +175,24 @@ class PolicyNetworkContinuous:
                 self.actionMean = self.actionMean * self.actionMeanScale
 
             if self.logStdInit is not None:
-                assert(self.logStdInit.shape == (1,self.outputLength)) 
-                self.actionLogStd = tf.get_variable(name="ActionsLogStdDetached{}Trainable".format("" if self.logStdTrainable else "Non"), initializer=self.logStdInit, trainable=self.logStdTrainable)
+                #print("self.logStdInit = {}. equal NaN = {}".format(self.logStdInit, self.logStdInit == -float("infinity")))
+                if self.logStdInit != -float("infinity"):
+                    assert(self.logStdInit.shape == (1,self.outputLength)) 
+                    self.actionLogStd = tf.get_variable(name="ActionsLogStdDetached{}Trainable".format("" if self.logStdTrainable else "Non"), initializer=self.logStdInit, trainable=self.logStdTrainable)
+                else:
+                    self.actionLogStd = None
             else:
                 self.actionLogStd = tf.layers.Dense(self.outputLength, name="ActionsLogStd")(curNode)
         
             if self.clipLogStd is not None:
                 self.actionLogStd = tf.clip_by_value(self.actionLogStd, self.clipLogStd[0], self.clipLogStd[1], name="ClipedActionsLogStd")
-                
-            self.actionStd = tf.math.exp(self.actionLogStd)
-            
-            self.actionRaw = self.actionMean + tf.random_normal(tf.shape(self.actionMean)) * self.actionStd
+
+            if self.actionLogStd is not None:   
+                self.actionStd = tf.math.exp(self.actionLogStd)                
+                self.actionRaw = self.actionMean + tf.random_normal(tf.shape(self.actionMean)) * self.actionStd
+            else:
+                self.actionRaw = self.actionMean
+
             
             #TODO: Check whether this work when squash=True(because gaussian_likelihood doesnt take it into consideration)
             if self.squashAction: 
@@ -196,13 +203,17 @@ class PolicyNetworkContinuous:
             if self.actionClip is not None: 
                 assert(self.actionClip.shape == (2, self.outputLength) )
                 self.actionFinal = tf.clip_by_value(self.actionFinal, self.actionClip[0,:], self.actionClip[1,:])
-                
-            self.sampledLogProbs = utils.gaussian_likelihood(self.actionRaw, self.actionMean, self.actionLogStd)
-            self.logProbWithCurrParams = utils.gaussian_likelihood(self.actions, self.actionMean, self.actionLogStd)#log prob(joint, all action components are from gaussian) for action given the observation(both fed with placeholder)
+
+            if self.actionLogStd is not None:    
+                self.sampledLogProbs = utils.gaussian_likelihood(self.actionRaw, self.actionMean, self.actionLogStd)
+                self.logProbWithCurrParams = utils.gaussian_likelihood(self.actions, self.actionMean, self.actionLogStd)#log prob(joint, all action components are from gaussian) for action given the observation(both fed with placeholder)
             
                            
     def getSampledActions(self, observations):
-        return self.sess.run([self.actionFinal, self.sampledLogProbs, self.actionMean, self.actionLogStd], feed_dict = {self.input : observations})
+        if self.actionLogStd is not None:
+            return self.sess.run([self.actionFinal, self.sampledLogProbs, self.actionMean, self.actionLogStd], feed_dict = {self.input : observations})
+        else:
+            return self.sess.run([self.actionFinal, self.actionMean], feed_dict = {self.input : observations})
 
          
         
