@@ -5,6 +5,7 @@ import numpy as np
 import tensorflow as tf
 import time
 import wandb
+from collections import deque
 
 import sys
 sys.path.append("../")
@@ -30,7 +31,7 @@ parser.add_argument('--learning_rate_q', type=float, default=1e-3,
                    help='learning rate of the optimizer of q function')
 parser.add_argument('--hidden_layers_q', type=int, nargs='+', default=[400,300],
                    help='hidden layers size in state value network')
-parser.add_argument('--learning_rate_policy', type=float, default=1e-4,
+parser.add_argument('--learning_rate_policy', type=float, default=1e-12,
                    help='learning rate of the optimizer of policy function')
 parser.add_argument('--hidden_layers_policy', type=int, nargs='+', default=[400,300],
                    help='hidden layers size in policy network')
@@ -64,7 +65,7 @@ args = parser.parse_args()
 
 if not args.seed:
     args.seed = int(time.time())
-    
+  
 graph = tf.Graph()
 with tf.Session(graph=graph) as sess:
 
@@ -84,10 +85,12 @@ with tf.Session(graph=graph) as sess:
     
     #summeries placeholders and summery scalar objects
     epRewPh = tf.placeholder(tf.float32, shape=None, name='episode_reward_summary')
+    epRewlast10MeanPh = tf.placeholder(tf.float32, shape=None, name='episode_reward_last10_mean_summary')
     epLenPh = tf.placeholder(tf.float32, shape=None, name='episode_length_summary')
     QLossPh = tf.placeholder(tf.float32, shape=None, name='q_function_loss_summary')
     policyLossPh = tf.placeholder(tf.float32, shape=None, name='policy_function_value_summary')
     epRewSum = tf.summary.scalar('episode_reward', epRewPh)
+    epRewlast10MeanSum = tf.summary.scalar('episode_reward_last10_mean', epRewlast10MeanPh)
     epLenSum = tf.summary.scalar('episode_length', epLenPh)
     QLossSum = tf.summary.scalar('q_function_loss', QLossPh)
     policyLossSum = tf.summary.scalar('policy_function_value', policyLossPh)  
@@ -165,6 +168,7 @@ with tf.Session(graph=graph) as sess:
     QTargetUpdateOp = utils.polyak(QTarget, Q, args.rho, sess, verbose=False)
     policyTargetUpdateOp = utils.polyak(policyTarget, policy, args.rho, sess, verbose=False)
 
+    last10Episodes = deque(maxlen=10)
     while step < args.total_train_steps:  
 
         episodeStart = time.time()
@@ -196,9 +200,12 @@ with tf.Session(graph=graph) as sess:
 
             if terminal or epLen == args.max_episode_len : 
                 finishedEp += 1
-                summaryRet, summaryLen = sess.run([epRewSum, epLenSum], feed_dict = {epRewPh:epRet, epLenPh:epLen})
+                last10Episodes.append(epRet)
+                summaryRet, summaryLen, summaryLast10Ret = sess.run([epRewSum, epLenSum, epRewlast10MeanSum], feed_dict = {epRewPh:epRet, epLenPh:epLen, epRewlast10MeanPh:np.mean(list(last10Episodes))})
+
                 writer.add_summary(summaryRet, finishedEp)
                 writer.add_summary(summaryLen, finishedEp)  
+                writer.add_summary(summaryLast10Ret, finishedEp)
 
                 #test deterministic agent
                 if(finishedEp % args.play_every_nth_epoch == 0):

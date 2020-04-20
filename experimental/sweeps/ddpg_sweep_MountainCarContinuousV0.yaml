@@ -1,0 +1,48 @@
+program: ./ddpg_paper.py
+method: bayes
+metric:
+  name: episode_reward_last10_mean
+  goal: maxmimize
+parameters:
+  gym-id:
+    value: "MountainCarContinuous-v0"
+  seed:
+    values: [1,2,5,10,1000]
+  total_train_steps:
+    value: 600000
+  rho:
+    values: [0.001, 0.005]
+  learning_rate_q:
+    values: [1e-3, 7e-4, 1e-4]
+  hidden_layers_q:
+    value: 10
+  learning_rate_policy:
+    values: [1e-3, 7e-4, 1e-4]
+  hidden_layers_policy:
+    value: 10
+  buffer_size:
+    values: [100000, 300000]
+  batch_size:
+    values: [64, 512]
+  update_after:
+    values: [1000, 10000]
+  update_freq: 
+    values: [50, 200]
+  start_steps:
+    value: 10000
+  eps_start:
+    min: 0.2
+    max: 0.5
+  eps_end:
+    min: 0.01
+    max: 0.05
+  steps_to_decrease:
+    value: 300000
+  max_episode_len:
+    value: 1000
+  wandb_log:
+    value: True
+  plot_histograms:
+    value: True
+  play_every_nth_epoch:
+    value: 10
