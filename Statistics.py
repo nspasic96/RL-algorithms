@@ -2,9 +2,9 @@ import numpy as np
 from collections import deque
 import tensorflow as tf
 
-class Histogram():
+class Statistics():
 
-    def __init__(self, size, dimensions, tbPrefix):
+    def __init__(self, size, dimensions, tbPrefix, histograms = False):
         self.size = size
         self.dimensions = dimensions
         self.buffers = [deque(maxlen = size) for i in range(dimensions)]
@@ -13,7 +13,11 @@ class Histogram():
         self.phs = []
         self.summaries = []
         
-        for i in range(dimensions):
+        if histograms:
+            self.addHistogramToGraph()
+
+    def addHistogramToGraph(self):
+        for i in range(self.dimensions):
             phCurr = tf.placeholder(dtype=tf.float32, shape=[None], name="{}_ph{}".format(self.prefix,i))
             self.phs.append(phCurr)
             self.summaries.append(tf.summary.histogram("{}_histogram/{}".format(self.prefix,i), phCurr))
@@ -39,6 +43,18 @@ class Histogram():
     
     def getValues(self):
         return [list(self.buffers[i]) for i in range(self.dimensions)]
+
+    def getMeans(self):
+        return [np.mean(list(self.buffers[i])) for i in range(self.dimensions)]
+
+    def getVars(self):
+        return [np.var(list(self.buffers[i])) for i in range(self.dimensions)]
+
+    def getExplainedVariance(self):
+        assert(self.dimensions == 2)
+        vals = self.getValues()
+        diffs = np.subtract(vals[0], vals[1])
+        return (1-np.var(diffs))/(self.getVars()[0])
         
         
 

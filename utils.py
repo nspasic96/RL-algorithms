@@ -187,3 +187,16 @@ def annealedNoise(start, end, stepsToAnneal, currStep):
     if currStep > stepsToAnneal:
         return end
     return end + k * (stepsToAnneal - currStep)
+
+def updateMeanVarCountFromMoments(currMean, currVar, currCount, batchMean, batchVar, batchCount):
+    delta = batchMean - currMean
+    totCount = currCount + batchCount
+
+    newMean = currMean + delta * batchCount / totCount
+    ma = currVar * currCount
+    mb = batchVar * batchCount
+    M2 = ma + mb + np.square(delta) * currCount * batchCount / totCount
+    newVar = M2 / totCount
+    newCount = totCount
+
+    return newMean, newVar, newCount

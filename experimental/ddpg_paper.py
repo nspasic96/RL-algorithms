@@ -13,7 +13,8 @@ sys.path.append("../")
 import utils
 from networks import QNetwork, PolicyNetworkContinuous
 from ReplayBuffer import ReplayBuffer
-from Histogram import Histogram
+from Statistics import Statistics
+from EnvironmentWrapper import EnvironmentWrapper
 
 parser = argparse.ArgumentParser(description='DDPG')
 
@@ -57,43 +58,53 @@ parser.add_argument('--wandb_projet_name', type=str, default="deep-deterministic
                    help="the wandb's project name")
 parser.add_argument('--wandb_log', type=bool, default=False,
                    help='whether to log results to wandb')
-parser.add_argument('--plot_histograms', type=bool, default=True,
+parser.add_argument('--run_statistics', type=bool, default=True,
                    help='whether to log histograms for actions and observations')
+parser.add_argument('--norm_obs', type=bool, default=False,
+                   help='whether to normalize observations')
+parser.add_argument('--norm_rew', type=bool, default=False,
+                   help='whether to normalize rewards')
+parser.add_argument('--clip_obs', type=float, default=1000000,
+                   help='observations clipping')
+parser.add_argument('--clip_rew', type=float, default=1000000,
+                   help='reward clipping')
 parser.add_argument('--play_every_nth_epoch', type=int, default=10,
                    help='every nth epoch will be rendered, set to epochs+1 not to render at all')
 args = parser.parse_args()
 
 if not args.seed:
     args.seed = int(time.time())
-  
+
 graph = tf.Graph()
 with tf.Session(graph=graph) as sess:
 
-    env = gym.make(args.gym_id)    
+    env = gym.make(args.gym_id)  
+    env = EnvironmentWrapper(env.env, args.norm_obs, args.norm_rew, args.clip_obs, args.clip_rew)  
     np.random.seed(args.seed)
     env.seed(args.seed)
     env.action_space.seed(args.seed)
     env.observation_space.seed(args.seed)
     tf.set_random_seed(args.seed)
     
-    #env._max_episode_steps = args.max_episode_len #check whether this is ok!
     if utils.is_discrete(env):
         exit("DDPG can only be applied to continuous action space environments")
     
     inputLength = env.observation_space.shape[0]
     outputLength = env.action_space.shape[0]
     
-    #summeries placeholders and summery scalar objects
+    #summeries placeholders and summery scalar objects   
     epRewPh = tf.placeholder(tf.float32, shape=None, name='episode_reward_summary')
-    epRewlast10MeanPh = tf.placeholder(tf.float32, shape=None, name='episode_reward_last10_mean_summary')
+    epRewLatestMeanPh = tf.placeholder(tf.float32, shape=None, name='episode_reward_latest_mean_summary')
     epLenPh = tf.placeholder(tf.float32, shape=None, name='episode_length_summary')
+    expVarPh = tf.placeholder(tf.float32, shape=None, name='explained_variance_summary')
     QLossPh = tf.placeholder(tf.float32, shape=None, name='q_function_loss_summary')
     policyLossPh = tf.placeholder(tf.float32, shape=None, name='policy_function_value_summary')
     epRewSum = tf.summary.scalar('episode_reward', epRewPh)
-    epRewlast10MeanSum = tf.summary.scalar('episode_reward_last10_mean', epRewlast10MeanPh)
-    epLenSum = tf.summary.scalar('episode_length', epLenPh)
-    QLossSum = tf.summary.scalar('q_function_loss', QLossPh)
-    policyLossSum = tf.summary.scalar('policy_function_value', policyLossPh)  
+    epRewLatestMeanSum = tf.summary.scalar('episode_reward_latest_mean', epRewLatestMeanPh)
+    epLenSum = tf.summary.scalar('episode_length', expVarPh)
+    expVarSum = tf.summary.scalar('explained_variance', epLenPh)
+    QLossSum = tf.summary.scalar('Losses/q_function_loss', QLossPh)
+    policyLossSum = tf.summary.scalar('Losses/policy_function_loss', policyLossPh)  
             
     implSuffix = "experimental"
     experimentName = f"{args.gym_id}__ddpg_{implSuffix}__{args.seed}__{int(time.time())}"
@@ -103,6 +114,7 @@ with tf.Session(graph=graph) as sess:
         cnf = vars(args)
         cnf['action_space_type'] = 'continuous'
         cnf['input_length'] = inputLength
+        cnf['reward_threshold'] = env.spec.reward_threshold
         cnf['output_length'] = outputLength
         cnf['exp_name_tb'] = experimentName
         wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, tensorboard=True)
@@ -153,12 +165,16 @@ with tf.Session(graph=graph) as sess:
     updates=0
     buffer = ReplayBuffer(args.buffer_size)
 
-    if args.plot_histograms:
-        histSize = 10000
+    if args.run_statistics:
+        statSizeActObs = 10000
+        statSizeRew = 100
+        statSizeExpVar = 10000
 
-        histograms = []
-        histograms.append(Histogram(histSize, inputLength, "observation"))
-        histograms.append(Histogram(histSize, outputLength, "action"))
+        statistics = []
+        statistics.append(Statistics(statSizeActObs, inputLength, "observation", True))
+        statistics.append(Statistics(statSizeActObs, outputLength, "action", True))
+        statistics.append(Statistics(statSizeRew, 1, "rewards"))
+        statistics.append(Statistics(statSizeExpVar, 2, "explained_variance"))
 
     #sync target and 'normal' network
     sess.run(utils.polyak(QTarget, Q, 1, sess, False))
@@ -168,12 +184,12 @@ with tf.Session(graph=graph) as sess:
     QTargetUpdateOp = utils.polyak(QTarget, Q, args.rho, sess, verbose=False)
     policyTargetUpdateOp = utils.polyak(policyTarget, policy, args.rho, sess, verbose=False)
 
-    last10Episodes = deque(maxlen=10)
-    while step < args.total_train_steps:  
+    solved = False
+    while step < args.total_train_steps and not solved:  
 
         episodeStart = time.time()
 
-        obs, epLen, epRet, doSample = env.reset(), 0, 0, True
+        obs, epLen, epRet, allRets, allQs, doSample = env.reset(), 0, 0, [], [], True
 
         #basicaly this is one episode because while exits when terminal state is reached or max number of steps(in episode or generaly) is reached
         while doSample: 
@@ -184,12 +200,16 @@ with tf.Session(graph=graph) as sess:
                 noise = utils.annealedNoise(args.eps_start, args.eps_end, args.steps_to_decrease, step)
                 sampledAction, _, = policy.getSampledActions(np.expand_dims(obs, 0)) + np.ones((1,outputLength))*noise
 
-            histograms[0].addValue(np.expand_dims(obs, 0))
-            histograms[1].addValue(sampledAction)
+            statistics[0].addValue(np.expand_dims(obs, 0))
+            statistics[1].addValue(sampledAction)
+           
+            predQ = sess.run(Q.output, feed_dict={obsPh:np.expand_dims(obs, 0), aPh:sampledAction})
 
-            nextObs, reward, terminal, _ = env.step(sampledAction[0])
+            nextObs, reward, terminal, infos = env.step(sampledAction[0])
             epLen += 1
-            epRet += reward
+            epRet += infos["origRew"] if args.norm_rew else reward
+            allRets.append(reward)
+            allQs.append(predQ)
 
             buffer.add(np.expand_dims(obs, 0), sampledAction, reward, np.expand_dims(nextObs, 0), terminal)
             obs = nextObs
@@ -200,12 +220,20 @@ with tf.Session(graph=graph) as sess:
 
             if terminal or epLen == args.max_episode_len : 
                 finishedEp += 1
-                last10Episodes.append(epRet)
-                summaryRet, summaryLen, summaryLast10Ret = sess.run([epRewSum, epLenSum, epRewlast10MeanSum], feed_dict = {epRewPh:epRet, epLenPh:epLen, epRewlast10MeanPh:np.mean(list(last10Episodes))})
+                statistics[2].addValue(np.asarray([[epRet]]))
+                meanLatest = statistics[2].getMeans()[0]
+                for i in range(len(allRets)-2,-1,-1):
+                    allRets[i] += args.gamma*allRets[i+1]
+                    statistics[3].addValue(np.asarray([[allRets[i], allQs[i]]]))
+                
+                explainedVar = statistics[3].getExplainedVariance()
+
+                summaryRet, summaryLen, summaryLatestRet, summaryExpVar = sess.run([epRewSum, epLenSum, epRewLatestMeanSum, expVarSum], feed_dict = {epRewPh:epRet, epLenPh:epLen, epRewLatestMeanPh:meanLatest, expVarPh:explainedVar})
 
                 writer.add_summary(summaryRet, finishedEp)
                 writer.add_summary(summaryLen, finishedEp)  
-                writer.add_summary(summaryLast10Ret, finishedEp)
+                writer.add_summary(summaryLatestRet, finishedEp)
+                writer.add_summary(summaryExpVar, finishedEp)
 
                 #test deterministic agent
                 if(finishedEp % args.play_every_nth_epoch == 0):
@@ -216,7 +244,17 @@ with tf.Session(graph=graph) as sess:
                         nextOsbTest, _, terminalTest, _ = env.step(sampledActionTest[0])
                         osbTest = nextOsbTest
                         if terminalTest:
-                            break           
+                            break  
+
+                if env.spec.reward_threshold is not None and env.spec.reward_threshold != 0:
+                    if(env.spec.reward_threshold > 0):
+                        th = env.spec.reward_threshold*0.95
+                    else:
+                        th = env.spec.reward_threshold/0.95
+                    if th < meanLatest:
+                        print("Environment solved in step after {} episodes. Variance of reward is {}% of the mean".format(finishedEp, meanLatest/statistics[2].getVars()[0]))
+                        solved = True
+
             
             #time for update
             if step > args.update_after and step % args.update_freq == 0:   
@@ -239,11 +277,11 @@ with tf.Session(graph=graph) as sess:
         
         episodeEnd = time.time()
 
-        if args.plot_histograms:
+        if args.run_statistics:
             feedD = {}
             total =0
             histSummaries = []
-            for hist in histograms:
+            for hist in statistics[:2]:
                 values = hist.getValues()
                 for i in range(hist.dimensions):
                     feedD[hist.phs[i]] = values[i]
@@ -252,7 +290,7 @@ with tf.Session(graph=graph) as sess:
 
             summEval = sess.run(histSummaries, feed_dict = feedD)
             for i in range(total):
-                writer.add_summary(summEval[i], global_step =finishedEp)
+                writer.add_summary(summEval[i], global_step=finishedEp)
 
         print("Episode {} took {}s for {} steps".format(finishedEp , episodeEnd - episodeStart, epLen))
     

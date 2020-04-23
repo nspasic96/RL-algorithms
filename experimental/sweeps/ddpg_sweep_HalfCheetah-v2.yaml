@@ -2,7 +2,7 @@ name: DDPG-MountainCarContinuous-v0
 program: ./ddpg_paper.py
 method: bayes
 metric:
-  name: episode_reward_last10_mean
+  name: episode_reward_latest_mean
   goal: maxmimize
 parameters:
   gym-id:
@@ -10,35 +10,35 @@ parameters:
   seed:
     values: [1,2,5,10,1000]
   total_train_steps:
-    value: 600000
+    value: 200000
   rho:
     values: [0.001, 0.005]
   learning_rate_q:
     values: [1e-3, 7e-4, 1e-4]
   hidden_layers_q:
-    value: 10
+    value: 50
   learning_rate_policy:
     values: [1e-3, 7e-4, 1e-4]
   hidden_layers_policy:
-    value: 10
+    value: 50
   buffer_size:
-    values: [100000, 300000]
+    values: [100000, 150000]
   batch_size:
-    values: [64, 512]
+    values: [64, 256]
   update_after:
-    values: [1000, 10000]
+    values: [5000, 20000]
   update_freq: 
     values: [50, 200]
   start_steps:
     value: 10000
   eps_start:
-    min: 0.2
-    max: 0.5
+    min: 0.5
+    max: 1
   eps_end:
     min: 0.01
     max: 0.05
   steps_to_decrease:
-    value: 300000
+    value: 130000
   max_episode_len:
     value: 1000
   wandb_log:
