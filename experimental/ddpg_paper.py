@@ -224,7 +224,7 @@ with tf.Session(graph=graph) as sess:
                 meanLatest = statistics[2].getMeans()[0]
                 for i in range(len(allRets)-2,-1,-1):
                     allRets[i] += args.gamma*allRets[i+1]
-                    statistics[3].addValue(np.asarray([[allRets[i], allQs[i]]]))
+                    statistics[3].addValue(np.asarray([[allRets[i][0], allQs[i][0]]]))
                 
                 explainedVar = statistics[3].getExplainedVariance()
 

@@ -1,4 +1,4 @@
-name: DDPG-MountainCarContinuous-v0
+name: DDPG-Walker2d-v2
 program: ./ddpg_paper.py
 method: bayes
 metric:
@@ -6,23 +6,19 @@ metric:
   goal: maxmimize
 parameters:
   gym-id:
-    value: "MountainCarContinuous-v0"
+    value: "Walker2d-v2"
   seed:
-    values: [1,2,5,10,1000]
+    values: [1,2,1000]
   total_train_steps:
-    value: 200000
+    value: 600000
   rho:
     values: [0.001, 0.005]
   learning_rate_q:
-    values: [1e-3, 7e-4, 1e-4]
-  hidden_layers_q:
-    value: 50
+    values: [1e-3 1e-4]
   learning_rate_policy:
-    values: [1e-3, 7e-4, 1e-4]
-  hidden_layers_policy:
-    value: 50
+    values: [1e-3, 1e-4]
   buffer_size:
-    values: [100000, 150000]
+    values: [150000, 300000]
   batch_size:
     values: [64, 256]
   update_after:
@@ -32,18 +28,16 @@ parameters:
   start_steps:
     value: 10000
   eps_start:
-    min: 0.5
-    max: 1
+    min: 0.2
+    max: 0.3
   eps_end:
     min: 0.01
     max: 0.05
   steps_to_decrease:
-    value: 130000
-  max_episode_len:
-    value: 1000
+    value: 200000
   wandb_log:
     value: False
-  plot_histograms:
+  run_statistics:
     value: True
   play_every_nth_epoch:
-    value: 10
+    value: 100001

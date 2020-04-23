@@ -1,4 +1,4 @@
-name: DDPG-Swimmer-v2
+name: DDPG-Humanoid-v2
 program: ./ddpg_paper.py
 method: bayes
 metric:
@@ -6,7 +6,7 @@ metric:
   goal: maxmimize
 parameters:
   gym-id:
-    value: "Swimmer-v2"
+    value: "Humanoid-v2"
   seed:
     values: [1,2,1000]
   total_train_steps:

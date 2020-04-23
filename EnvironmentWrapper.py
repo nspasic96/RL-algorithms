@@ -23,9 +23,9 @@ class EnvironmentWrapper(gym.core.Wrapper):
         self.clipOb = clipOb
         self.clipRew = clipRew
         if(normOb):
-            self.obsRMS = RunningMeanStd()
+            self.obsRMS = RunningMeanStd(shape=self.observation_space.shape)
         if(normRew):
-            self.rewRMS = RunningMeanStd()
+            self.rewRMS = RunningMeanStd(shape=(1,))
     
     def step(self, action):
         origObs, origRew, origTer, infos = self.env.step(action)
@@ -39,7 +39,7 @@ class EnvironmentWrapper(gym.core.Wrapper):
             obs = np.clip((origObs - self.obsRMS.mean)/(self.obsRMS.var + 1e-8),-self.clipOb,self.clipOb)
             
         if(self.normRew):
-            self.rewRMS.update(origRew)
+            self.rewRMS.update(np.array([origRew]))
             rew = np.clip((origRew - self.rewRMS.mean)/(self.rewRMS.var + 1e-8),-self.clipRew,self.clipRew)
             infos['origRew'] = origRew
 
