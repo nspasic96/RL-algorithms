@@ -203,7 +203,7 @@ with tf.Session(graph=graph) as sess:
             statistics[0].addValue(np.expand_dims(obs, 0))
             statistics[1].addValue(sampledAction)
            
-            predQ = sess.run(Q.output, feed_dict={obsPh:np.expand_dims(obs, 0), aPh:sampledAction})
+            predQ = sess.run(Q.output, feed_dict={obsPh:np.expand_dims(obs, 0), aPh:sampledAction})[0]
 
             nextObs, reward, terminal, infos = env.step(sampledAction[0])
             epLen += 1
@@ -224,7 +224,7 @@ with tf.Session(graph=graph) as sess:
                 meanLatest = statistics[2].getMeans()[0]
                 for i in range(len(allRets)-2,-1,-1):
                     allRets[i] += args.gamma*allRets[i+1]
-                    statistics[3].addValue(np.asarray([[allRets[i][0], allQs[i][0]]]))
+                    statistics[3].addValue(np.asarray([[allRets[i], allQs[i]]]))
                 
                 explainedVar = statistics[3].getExplainedVariance()
 

@@ -14,7 +14,7 @@ parameters:
   rho:
     values: [0.001, 0.005]
   learning_rate_q:
-    values: [1e-3 1e-4]
+    values: [1e-3, 1e-4]
   learning_rate_policy:
     values: [1e-3, 1e-4]
   buffer_size:

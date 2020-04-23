@@ -40,7 +40,7 @@ class EnvironmentWrapper(gym.core.Wrapper):
             
         if(self.normRew):
             self.rewRMS.update(np.array([origRew]))
-            rew = np.clip((origRew - self.rewRMS.mean)/(self.rewRMS.var + 1e-8),-self.clipRew,self.clipRew)
+            rew = np.clip((origRew - self.rewRMS.mean)/(self.rewRMS.var + 1e-8),-self.clipRew,self.clipRew)[0]
             infos['origRew'] = origRew
 
         return obs, rew, ter, infos
