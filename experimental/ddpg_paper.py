@@ -101,7 +101,7 @@ with tf.Session(graph=graph) as sess:
     policyLossPh = tf.placeholder(tf.float32, shape=None, name='policy_function_value_summary')
     epRewSum = tf.summary.scalar('episode_reward', epRewPh)
     epRewLatestMeanSum = tf.summary.scalar('episode_reward_latest_mean', epRewLatestMeanPh)
-    epLenSum = tf.summary.scalar('episode_length', expLenPh)
+    epLenSum = tf.summary.scalar('episode_length', epLenPh)
     expVarSum = tf.summary.scalar('explained_variance', expVarPh)
     QLossSum = tf.summary.scalar('Losses/q_function_loss', QLossPh)
     policyLossSum = tf.summary.scalar('Losses/policy_function_loss', policyLossPh)  
