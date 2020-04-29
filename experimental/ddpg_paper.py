@@ -195,7 +195,7 @@ with tf.Session(graph=graph) as sess:
                 sampledAction = np.asarray([env.action_space.sample()])
             else:
                 noise = utils.annealedNoise(args.eps_start, args.eps_end, args.steps_to_decrease, step)
-                sampledAction, _, = policy.getSampledActions(np.expand_dims(obs, 0)) + np.ones((1,outputLength))*noise
+                sampledAction, _, = policy.getSampledActions(np.expand_dims(obs, 0)) + np.ones((1,outputLength))*noise #this should not be like this, noise should be sampled, not fixed like this
 
             statistics[0].addValue(np.expand_dims(obs, 0))
             statistics[1].addValue(sampledAction)
