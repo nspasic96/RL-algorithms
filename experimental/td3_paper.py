@@ -16,7 +16,7 @@ from ReplayBuffer import ReplayBuffer
 from Statistics import Statistics
 from EnvironmentWrapper import EnvironmentWrapper
 
-parser = argparse.ArgumentParser(description='DDPG')
+parser = argparse.ArgumentParser(description='TD3')
 
 parser.add_argument('--gym-id', type=str, default="HopperPyBulletEnv-v0",
                    help='the id of the gym environment')
@@ -50,6 +50,8 @@ parser.add_argument('--eps_start', type=float, default=0.2,
                    help='start gaussian noise to add to mean action value')
 parser.add_argument('--eps_end', type=float, default=0.05,
                    help='end gaussian noise to add to mean action value')
+parser.add_argument('--eps', type=float, default=0.01,
+                   help='to do')
 parser.add_argument('--steps_to_decrease', type=int, default=1000000,
                    help='steps to anneal noise from start to end')
 parser.add_argument('--max_episode_len', type=int, default=1000,
@@ -87,7 +89,7 @@ with tf.Session(graph=graph) as sess:
     tf.set_random_seed(args.seed)
     
     if utils.is_discrete(env):
-        exit("DDPG can only be applied to continuous action space environments")
+        exit("TD3 can only be applied to continuous action space environments")
     
     inputLength = env.observation_space.shape[0]
     outputLength = env.action_space.shape[0]
@@ -107,7 +109,7 @@ with tf.Session(graph=graph) as sess:
     policyLossSum = tf.summary.scalar('Losses/policy_function_loss', policyLossPh)  
             
     implSuffix = "experimental"
-    experimentName = f"{args.gym_id}__ddpg_{implSuffix}__{args.seed}__{int(time.time())}"
+    experimentName = f"{args.gym_id}__td3_{implSuffix}__{args.seed}__{int(time.time())}"
     writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
 
     if args.wandb_log:
@@ -125,29 +127,35 @@ with tf.Session(graph=graph) as sess:
     obsPh = tf.placeholder(dtype=tf.float32, shape=[None, inputLength], name="observations")   
     nextObsPh = tf.placeholder(dtype=tf.float32, shape=[None, inputLength], name="nextObservations")  
     aPh = tf.placeholder(dtype=tf.float32, shape=[None,outputLength], name="actions")
+    epsPh = tf.placeholder(dtype=tf.float32, shape=[1,outputLength], name="actionNoise")
+    aWithNoisePh = aPh + epsPh
     
     #definition of networks
     clip = np.zeros(shape=(2,outputLength))
     clip[0,:] = env.action_space.low
-    clip[1,:] = env.action_space.high
-
+    clip[1,:] = env.action_space.hiddenLayerMergeWithAction
     policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [tf.nn.tanh]
     qActivations = [tf.nn.relu for i in range(len(args.hidden_layers_q))] + [None]
 
     hiddenLayerMergeWithAction = 0
     policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=-float("infinity"), logStdTrainable=False, actionClip=clip)
     policyTarget = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, nextObsPh, aPh, "Target", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=-float("infinity"), logStdTrainable=False, actionClip=clip)
-    Q = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh, aPh, hiddenLayerMergeWithAction, suffix="Orig") # original Q network
-    QAux = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh,  policy.actionFinal, hiddenLayerMergeWithAction, suffix="Aux", reuse=Q) # network with parameters same as original Q network, but instead of action placeholder it takse output from current policy
-    QTarget = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, nextObsPh, policyTarget.actionFinal, hiddenLayerMergeWithAction, suffix="Target") #target Q network, instead of action placeholder it takse output from target policy
+    Q1 = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh, aPh, hiddenLayerMergeWithAction, suffix="Orig1") # original Q network 1 
+    Q2 = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh, aPh, hiddenLayerMergeWithAction, suffix="Orig2") # original Q network 2 
+    QAux1 = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh,  policy.actionFinal, hiddenLayerMergeWithAction, suffix="Aux1", reuse=Q1) # network with parameters same as original Q1 network, but instead of action placeholder it takse output from current policy
+    QTarget1 = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, nextObsPh, aWithNoisePh, hiddenLayerMergeWithAction, suffix="Target1") #target Q1 network, instead of action placeholder it takse output from target policy
+    QTarget2 = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, nextObsPh, aWithNoisePh, hiddenLayerMergeWithAction, suffix="Target2") #target Q2 network, instead of action placeholder it takse output from target policy
 
     #definition of losses to optimize
-    policyLoss = -tf.reduce_mean(QAux.output)# - sign because we want to maximize our objective    
-    targets = tf.stop_gradient(rewPh + args.gamma*(1-terPh)*QTarget.output)
-    qLoss = tf.reduce_mean((Q.output - targets)**2)# + tf.reduce_sum([0.02*tf.nn.l2_loss(trVar) for trVar in tf.trainable_variables(Q.variablesScope)])
+    policyLoss = -tf.reduce_mean(QAux1.output)# - sign because we want to maximize our objective    
+    targets = tf.stop_gradient(rewPh + args.gamma*(1-terPh)*tf.math.maximum(QTarget1.output, QTarget2.outputLength))
+    q1Loss = tf.reduce_mean((Q1.output - targets)**2)
+    q2Loss = tf.reduce_mean((Q2.output - targets)**2)
     
-    qParams = utils.get_vars("QNetworkOrig")
-    qOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_q).minimize(qLoss, var_list = qParams)
+    q1Params = utils.get_vars("QNetworkOrig1")
+    q2Params = utils.get_vars("QNetworkOrig2")
+    q1OptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_q).minimize(q1Loss, var_list = q1Params)
+    q2OptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_q).minimize(q2Loss, var_list = q2Params)
     policyParams = utils.get_vars("PolicyNetworkContinuousOrig")
     policyOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_policy).minimize(policyLoss, var_list=policyParams)
 
@@ -174,11 +182,13 @@ with tf.Session(graph=graph) as sess:
         statistics.append(Statistics(statSizeExpVar, 2, "explained_variance"))
 
     #sync target and 'normal' network
-    sess.run(utils.polyak(QTarget, Q, 1, sess, False))
+    sess.run(utils.polyak(QTarget1, Q1, 1, sess, False))
+    sess.run(utils.polyak(QTarget2, Q2, 1, sess, False))
     sess.run(utils.polyak(policyTarget, policy, 1, sess, False))
 
     #get target update ops  
-    QTargetUpdateOp = utils.polyak(QTarget, Q, args.rho, sess, verbose=False)
+    Q1TargetUpdateOp = utils.polyak(QTarget1, Q1, args.rho, sess, verbose=False)
+    Q2TargetUpdateOp = utils.polyak(QTarget2, Q2, args.rho, sess, verbose=False)
     policyTargetUpdateOp = utils.polyak(policyTarget, policy, args.rho, sess, verbose=False)
 
     solved = False
@@ -200,7 +210,7 @@ with tf.Session(graph=graph) as sess:
             statistics[0].addValue(np.expand_dims(obs, 0))
             statistics[1].addValue(sampledAction)
            
-            predQ = sess.run(Q.output, feed_dict={obsPh:np.expand_dims(obs, 0), aPh:sampledAction})[0]
+            #predQ = sess.run(Q.output, feed_dict={obsPh:np.expand_dims(obs, 0), aPh:sampledAction})[0]
 
             nextObs, reward, terminal, infos = env.step(sampledAction[0])
             epLen += 1
@@ -252,14 +262,14 @@ with tf.Session(graph=graph) as sess:
                         print("Environment solved in step after {} episodes. Variance of reward is {}% of the mean".format(finishedEp, meanLatest/statistics[2].getVars()[0]))
                         solved = True
 
-            
+            #update critics every step
+            observations, actions, rewards, nextObservations, terminals = buffer.sample(args.batch_size) 
+            sess.run([q1OptimizationStep, q2OptimizationStep], feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions, eps:args.eps*np.ones((1,outputLength))})
+                    
             #time for update
             if step > args.update_after and step % args.update_freq == 0:   
 
                 for _ in range(args.update_freq):        
-                    observations, actions, rewards, nextObservations, terminals = buffer.sample(args.batch_size)                
-
-                    sess.run(qOptimizationStep, feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
                     sess.run(policyOptimizationStep, feed_dict={obsPh:observations})
 
                     qLossNew, policyLossNew = sess.run([qLoss, policyLoss], feed_dict={obsPh:observations, nextObsPh:nextObservations, rewPh:rewards, terPh:terminals, aPh:actions})
@@ -269,7 +279,8 @@ with tf.Session(graph=graph) as sess:
                     writer.add_summary(summaryP, updates)  
                     updates +=1
                     
-                    sess.run(QTargetUpdateOp)
+                    sess.run(Q1TargetUpdateOp)
+                    sess.run(Q2TargetUpdateOp)
                     sess.run(policyTargetUpdateOp)
         
         episodeEnd = time.time()

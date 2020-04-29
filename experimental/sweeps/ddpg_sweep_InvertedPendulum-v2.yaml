@@ -1,0 +1,46 @@
+name: DDPG-InvertedPendulum-v2
+program: ./ddpg_paper.py
+method: bayes
+metric:
+  name: episode_reward_latest_mean
+  goal: maxmimize
+parameters:
+  gym-id:
+    value: "InvertedPendulum-v2"
+  seed:
+    values: [1,2,1000]
+  total_train_steps:
+    value: 600000
+  rho:
+    min: 0.001 
+    max: 0.005
+  learning_rate_q:
+    min: 1e-4
+    max: 1e-3
+  learning_rate_policy:
+    min: 1e-4
+    max: 1e-3
+  buffer_size:
+    values: [150000, 300000]
+  batch_size:
+    values: [64, 256]
+  update_after:
+    values: [5000, 20000]
+  update_freq: 
+    values: [50, 200]
+  start_steps:
+    value: 10000
+  eps_start:
+    min: 0.2
+    max: 0.3
+  eps_end:
+    min: 0.01
+    max: 0.05
+  steps_to_decrease:
+    value: 200000
+  wandb_log:
+    value: False
+  run_statistics:
+    value: True
+  play_every_nth_epoch:
+    value: 100001
