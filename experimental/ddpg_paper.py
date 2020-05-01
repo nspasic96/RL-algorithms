@@ -233,35 +233,35 @@ with tf.Session(graph=graph) as sess:
                 writer.add_summary(summaryLen, finishedEp)  
                 writer.add_summary(summaryExpVar, finishedEp)
 
-                #test deterministic agent
-                if(step % args.test_every_n_steps == 0):
-                    evaluationNum += 1
-                    print("Testing agent with no exploration noise for {} episodes".format(args.test_episodes))
-                    for _ in range(args.test_episodes):
-                        osbTest = env.reset()
-                        testRet = 0
-                        for _ in range(args.max_episode_len):
-                            env.render()
-                            sampledActionTest, _ = policy.getSampledActions(np.expand_dims(osbTest, 0))  
-                            nextOsbTest, reward, terminalTest, _ = env.step(sampledActionTest[0])
-                            testRet += reward
-                            osbTest = nextOsbTest
-                            if terminalTest:
-                                break  
-                        statistics[2].addValue(np.asarray([[testRet]]))
-                       
-                    meanLatest = statistics[2].getMeans()[0]
-                    summaryLatestRet = sess.run(epRewLatestMeanSum, feed_dict = {epRewLatestMeanPh:meanLatest})
-                    writer.add_summary(summaryLatestRet, evaluationNum)  
+            #test deterministic agent
+            if(step % args.test_every_n_steps == 0):
+                evaluationNum += 1
+                print("Testing agent with no exploration noise for {} episodes".format(args.test_episodes))
+                for _ in range(args.test_episodes):
+                    osbTest = env.reset()
+                    testRet = 0
+                    for _ in range(args.max_episode_len):
+                        env.render()
+                        sampledActionTest, _ = policy.getSampledActions(np.expand_dims(osbTest, 0))  
+                        nextOsbTest, reward, terminalTest, _ = env.step(sampledActionTest[0])
+                        testRet += reward
+                        osbTest = nextOsbTest
+                        if terminalTest:
+                            break  
+                    statistics[2].addValue(np.asarray([[testRet]]))
+                    
+                meanLatest = statistics[2].getMeans()[0]
+                summaryLatestRet = sess.run(epRewLatestMeanSum, feed_dict = {epRewLatestMeanPh:meanLatest})
+                writer.add_summary(summaryLatestRet, evaluationNum)  
 
-                    if env.spec.reward_threshold is not None and env.spec.reward_threshold != 0:
-                        if(env.spec.reward_threshold > 0):
-                            th = env.spec.reward_threshold*0.95
-                        else:
-                            th = env.spec.reward_threshold/0.95
-                        if th < meanLatest:
-                            print("Environment solved in step after {} episodes. Variance of reward is {}% of the mean".format(finishedEp, meanLatest/statistics[2].getVars()[0]))
-                            solved = True
+                if env.spec.reward_threshold is not None and env.spec.reward_threshold != 0:
+                    if(env.spec.reward_threshold > 0):
+                        th = env.spec.reward_threshold*0.95
+                    else:
+                        th = env.spec.reward_threshold/0.95
+                    if th < meanLatest:
+                        print("Environment solved in step after {} episodes. Variance of reward is {}% of the mean".format(finishedEp, meanLatest/statistics[2].getVars()[0]))
+                        solved = True
 
             
             #time for update
