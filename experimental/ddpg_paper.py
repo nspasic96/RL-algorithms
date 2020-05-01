@@ -32,7 +32,7 @@ parser.add_argument('--learning_rate_q', type=float, default=1e-3,
                    help='learning rate of the optimizer of q function')
 parser.add_argument('--hidden_layers_q', type=int, nargs='+', default=[400,300],
                    help='hidden layers size in state value network')
-parser.add_argument('--learning_rate_policy', type=float, default=1e-12,
+parser.add_argument('--learning_rate_policy', type=float, default=1e-4,
                    help='learning rate of the optimizer of policy function')
 parser.add_argument('--hidden_layers_policy', type=int, nargs='+', default=[400,300],
                    help='hidden layers size in policy network')
@@ -68,8 +68,10 @@ parser.add_argument('--clip_obs', type=float, default=1000000,
                    help='observations clipping')
 parser.add_argument('--clip_rew', type=float, default=1000000,
                    help='reward clipping')
-parser.add_argument('--play_every_nth_epoch', type=int, default=10,
-                   help='every nth epoch will be rendered, set to epochs+1 not to render at all')
+parser.add_argument('--test_every_n_steps', type=int, default=5000,
+                   help='every nth step will triger evaluation, set to total_train_steps not to evaluate at all')
+parser.add_argument('--test_episodes', type=int, default=10,
+                   help='test agent on more than one episode for more accurate approximation')
 args = parser.parse_args()
 
 if not args.seed:
@@ -116,7 +118,6 @@ with tf.Session(graph=graph) as sess:
         cnf['input_length'] = inputLength
         cnf['reward_threshold'] = env.spec.reward_threshold
         cnf['output_length'] = outputLength
-        cnf['exp_name_tb'] = experimentName
         wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, tensorboard=True)
     
     #definition of placeholders
@@ -144,11 +145,11 @@ with tf.Session(graph=graph) as sess:
     #definition of losses to optimize
     policyLoss = -tf.reduce_mean(QAux.output)# - sign because we want to maximize our objective    
     targets = tf.stop_gradient(rewPh + args.gamma*(1-terPh)*QTarget.output)
-    qLoss = tf.reduce_mean((Q.output - targets)**2)# + tf.reduce_sum([0.02*tf.nn.l2_loss(trVar) for trVar in tf.trainable_variables(Q.variablesScope)])
+    qLoss = tf.reduce_mean((Q.output - targets)**2) + tf.reduce_sum([0.02*tf.nn.l2_loss(trVar) for trVar in tf.trainable_variables(Q.variablesScope)])
     
-    qParams = utils.get_vars("QNetworkOrig")
+    qParams = utils.get_vars(Q.variablesScope)
     qOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_q).minimize(qLoss, var_list = qParams)
-    policyParams = utils.get_vars("PolicyNetworkContinuousOrig")
+    policyParams = utils.get_vars(policy.variablesScope)
     policyOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_policy).minimize(policyLoss, var_list=policyParams)
 
     #tf session initialization
@@ -158,13 +159,14 @@ with tf.Session(graph=graph) as sess:
     
     #algorithm
     finishedEp = 0
+    evaluationNum = 0
     step = 0
     updates=0
     buffer = ReplayBuffer(args.buffer_size)
 
     if args.run_statistics:
         statSizeActObs = 10000
-        statSizeRew = 100
+        statSizeRew = args.test_episodes
         statSizeExpVar = 10000
 
         statistics = []
@@ -195,7 +197,7 @@ with tf.Session(graph=graph) as sess:
                 sampledAction = np.asarray([env.action_space.sample()])
             else:
                 noise = utils.annealedNoise(args.eps_start, args.eps_end, args.steps_to_decrease, step)
-                sampledAction, _, = policy.getSampledActions(np.expand_dims(obs, 0)) + np.ones((1,outputLength))*noise #this should not be like this, noise should be sampled, not fixed like this
+                sampledAction, _, = policy.getSampledActions(np.expand_dims(obs, 0)) + np.random.normal(0, noise,(1,outputLength))
 
             statistics[0].addValue(np.expand_dims(obs, 0))
             statistics[1].addValue(sampledAction)
@@ -225,32 +227,41 @@ with tf.Session(graph=graph) as sess:
                 
                 explainedVar = statistics[3].getExplainedVariance()
 
-                summaryRet, summaryLen, summaryLatestRet, summaryExpVar = sess.run([epRewSum, epLenSum, epRewLatestMeanSum, expVarSum], feed_dict = {epRewPh:epRet, epLenPh:epLen, epRewLatestMeanPh:meanLatest, expVarPh:explainedVar})
+                summaryRet, summaryLen, summaryExpVar = sess.run([epRewSum, epLenSum, expVarSum], feed_dict = {epRewPh:epRet, epLenPh:epLen, expVarPh:explainedVar})
 
                 writer.add_summary(summaryRet, finishedEp)
                 writer.add_summary(summaryLen, finishedEp)  
-                writer.add_summary(summaryLatestRet, finishedEp)
                 writer.add_summary(summaryExpVar, finishedEp)
 
                 #test deterministic agent
-                if(finishedEp % args.play_every_nth_epoch == 0):
-                    for _ in range(args.max_episode_len):
-                        env.render()
+                if(step % args.test_every_n_steps == 0):
+                    evaluationNum += 1
+                    print("Testing agent with no exploration noise for {} episodes".format(args.test_episodes))
+                    for _ in range(args.test_episodes):
                         osbTest = env.reset()
-                        sampledActionTest, _ = policy.getSampledActions(np.expand_dims(osbTest, 0))  
-                        nextOsbTest, _, terminalTest, _ = env.step(sampledActionTest[0])
-                        osbTest = nextOsbTest
-                        if terminalTest:
-                            break  
+                        testRet = 0
+                        for _ in range(args.max_episode_len):
+                            env.render()
+                            sampledActionTest, _ = policy.getSampledActions(np.expand_dims(osbTest, 0))  
+                            nextOsbTest, reward, terminalTest, _ = env.step(sampledActionTest[0])
+                            testRet += reward
+                            osbTest = nextOsbTest
+                            if terminalTest:
+                                break  
+                        statistics[2].addValue(np.asarray([[testRet]]))
+                       
+                    meanLatest = statistics[2].getMeans()[0]
+                    summaryLatestRet = sess.run(epRewLatestMeanSum, feed_dict = {epRewLatestMeanPh:meanLatest})
+                    writer.add_summary(summaryLatestRet, evaluationNum)  
 
-                if env.spec.reward_threshold is not None and env.spec.reward_threshold != 0:
-                    if(env.spec.reward_threshold > 0):
-                        th = env.spec.reward_threshold*0.95
-                    else:
-                        th = env.spec.reward_threshold/0.95
-                    if th < meanLatest:
-                        print("Environment solved in step after {} episodes. Variance of reward is {}% of the mean".format(finishedEp, meanLatest/statistics[2].getVars()[0]))
-                        solved = True
+                    if env.spec.reward_threshold is not None and env.spec.reward_threshold != 0:
+                        if(env.spec.reward_threshold > 0):
+                            th = env.spec.reward_threshold*0.95
+                        else:
+                            th = env.spec.reward_threshold/0.95
+                        if th < meanLatest:
+                            print("Environment solved in step after {} episodes. Variance of reward is {}% of the mean".format(finishedEp, meanLatest/statistics[2].getVars()[0]))
+                            solved = True
 
             
             #time for update
