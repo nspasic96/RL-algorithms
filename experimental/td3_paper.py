@@ -76,6 +76,8 @@ parser.add_argument('--test_every_n_steps', type=int, default=5000,
                    help='every nth step will triger evaluation, set to total_train_steps not to evaluate at all')
 parser.add_argument('--test_episodes', type=int, default=10,
                    help='test agent on more than one episode for more accurate approximation')
+parser.add_argument('--render', type=bool, default=False,
+                   help='whether to render when testing')
 args = parser.parse_args()
 
 if not args.seed:
@@ -255,7 +257,8 @@ with tf.Session(graph=graph) as sess:
                     osbTest = env.reset()
                     testRet = 0
                     for _ in range(args.max_episode_len):
-                        env.render()
+                        if args.render:
+                            env.render()
                         sampledActionTest, _ = policy.getSampledActions(np.expand_dims(osbTest, 0))  
                         nextOsbTest, reward, terminalTest, _ = env.step(sampledActionTest[0])
                         testRet += reward
