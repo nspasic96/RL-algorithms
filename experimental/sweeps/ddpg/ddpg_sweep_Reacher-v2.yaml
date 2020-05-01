@@ -1,4 +1,4 @@
-name: DDPG-InvertedDoublePendulum-v2
+name: DDPG-Reacher-v2
 program: ./ddpg_paper.py
 method: bayes
 metric:
@@ -6,27 +6,30 @@ metric:
   goal: maxmimize
 parameters:
   gym-id:
-    value: "InvertedDoublePendulum-v2"
+    value: "Reacher-v2"
   seed:
-    values: [1,2,1000]
+    values: [1,2,100,1000,500000]
   total_train_steps:
-    value: 600000
+    value: 1000000
   rho:
-    values: [0.001, 0.005]
+    min: 0.001 
+    max: 0.005
   learning_rate_q:
-    values: [1e-3, 1e-4]
+    min: 1e-4
+    max: 1e-3
   learning_rate_policy:
-    values: [1e-3, 1e-4]
+    min: 1e-5
+    max: 1e-4
   buffer_size:
-    values: [150000, 300000]
+    values: [500000, 1000000]
   batch_size:
-    values: [64, 256]
+    values: [64, 100]
   update_after:
     values: [5000, 20000]
   update_freq: 
     values: [50, 200]
   start_steps:
-    value: 10000
+    values: [10000,1000]
   eps_start:
     min: 0.2
     max: 0.3
@@ -39,5 +42,3 @@ parameters:
     value: False
   run_statistics:
     value: True
-  play_every_nth_epoch:
-    value: 100001

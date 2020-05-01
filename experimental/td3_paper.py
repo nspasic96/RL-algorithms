@@ -36,7 +36,7 @@ parser.add_argument('--learning_rate_policy', type=float, default=1e-3,
                    help='learning rate of the optimizer of policy function')
 parser.add_argument('--hidden_layers_policy', type=int, nargs='+', default=[400,300],
                    help='hidden layers size in policy network')
-parser.add_argument('--buffer_size', type=int, default=1000000,
+parser.add_argument('--buffer_size', type=int, default=-1,
                    help='size of reply buffer, paper sugests this to be equal to number of steps')
 parser.add_argument('--batch_size', type=int, default=100,
                    help='number of samples from reply buffer to train on')
@@ -54,7 +54,7 @@ parser.add_argument('--sigma_hat', type=float, default=0.2,
                    help='sigma for noise to add to target policy generated actions when updating critics')
 parser.add_argument('--target_action_noise_clip', type=float, default=0.5,
                    help='clip noise from previous parameter')
-parser.add_argument('--steps_to_decrease', type=int, default=1000000,
+parser.add_argument('--steps_to_decrease', type=int, default=100000,
                    help='steps to anneal noise from start to end')
 parser.add_argument('--max_episode_len', type=int, default=1000,
                    help="max length of one episode")
@@ -80,6 +80,10 @@ args = parser.parse_args()
 
 if not args.seed:
     args.seed = int(time.time())
+
+if args.buffer_size == -1:
+    args.buffer_size = args.total_train_steps
+    print("\nBuffer size not specified. Taking value of {} which is the same as total_train_steps, as suggested by the paper\n".format(args.buffer_size)) 
 
 graph = tf.Graph()
 with tf.Session(graph=graph) as sess:

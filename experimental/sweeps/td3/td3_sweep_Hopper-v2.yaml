@@ -1,0 +1,21 @@
+name: TD3-Hopper-v2
+program: ./td3_paper.py
+method: bayes
+metric:
+  name: episode_reward_latest_mean
+  goal: maxmimize
+parameters:
+  gym-id:
+    value: "Hopper-v2"
+  seed:
+    values: [1,2,100,1000,500000]
+  total_train_steps:
+    value: 1000000
+  start_steps:
+    values: [10000,1000]
+  steps_to_decrease:
+    value: 200000
+  wandb_log:
+    value: False
+  run_statistics:
+    value: True
