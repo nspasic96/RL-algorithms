@@ -138,8 +138,8 @@ with tf.Session(graph=graph) as sess:
     qActivations = [tf.nn.relu for i in range(len(args.hidden_layers_q))] + [None]
 
     hiddenLayerMergeWithAction = 0
-    policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=-float("infinity"), logStdTrainable=False, actionClip=clip)
-    policyTarget = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, nextObsPh, aPh, "Target", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=-float("infinity"), logStdTrainable=False, actionClip=clip)
+    policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=None, logStdTrainable=False, actionClip=clip)
+    policyTarget = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, nextObsPh, aPh, "Target", actionMeanScale=np.expand_dims(clip[1,:],0), logStdInit=None, logStdTrainable=False, actionClip=clip)
     Q = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh, aPh, hiddenLayerMergeWithAction, suffix="Orig") # original Q network
     QAux = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, obsPh,  policy.actionFinal, hiddenLayerMergeWithAction, suffix="Aux", reuse=Q) # network with parameters same as original Q network, but instead of action placeholder it takse output from current policy
     QTarget = QNetwork(sess, inputLength, outputLength, args.hidden_layers_q, qActivations, nextObsPh, policyTarget.actionFinal, hiddenLayerMergeWithAction, suffix="Target") #target Q network, instead of action placeholder it takse output from target policy

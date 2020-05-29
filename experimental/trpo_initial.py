@@ -17,6 +17,10 @@ parser = argparse.ArgumentParser(description='TRPO')
 
 parser.add_argument('--gym-id', type=str, default="Pong-ram-v0",
                    help='the id of the gym environment')
+parser.add_argument('--plus', type=bool, default=False,
+                   help='whether to add code optimizations 1-3')
+parser.add_argument('--eps', type=float, default=0.2,
+                   help='epsilon for clipping in for code optimization')
 parser.add_argument('--seed', type=int,
                    help='seed of the experiment')
 parser.add_argument('--epochs', type=int, default=1000,
@@ -26,7 +30,9 @@ parser.add_argument('--epoch_len', type=int, default=4000,
 parser.add_argument('--gamma', type=float, default=0.99,
                    help='the discount factor gamma')
 parser.add_argument('--delta', type=float, default=0.01,
-                   help='max KL distance between two successive distributions')
+                   help='max KL distance between two successive distributions at the start of anneailng')
+parser.add_argument('--delta_final', type=float, default=0.01,
+                   help='max KL distance between two successive distributions at the end of annealing')
 parser.add_argument('--learning_rate_state_value', type=float, default=1e-3,
                    help='learning rate of the optimizer of state-value function')
 parser.add_argument('--hidden_layers_state_value', type=int, nargs='+', default=[64,64],
@@ -108,9 +114,11 @@ with tf.Session(graph=graph) as sess:
     #definition of placeholders
     logProbSampPh = tf.placeholder(dtype = dtype, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
     advPh = tf.placeholder(dtype = dtype, shape=[None], name="advantages") #advantages obtained using GAE-lambda and values obtainet from StateValueNetwork V
+    VPrev = tf.placeholder(dtype = dtype, shape=[None], name="previousValues") #values for previous iteration returned by StateValueNetwork V
     returnsPh = tf.placeholder(dtype = dtype, shape=[None], name="returns") #total discounted cumulative reward
     policyParamsFlatten= tf.placeholder(dtype = dtype, shape=[None], name = "policyParams") #policy params flatten, used in assingment of pi params in line search algorithm
-    obsPh = tf.placeholder(dtype=dtype, shape=[None, inputLength], name="observations") #observations
+    obsPh = tf.placeholder(dtype=dtype, shape=[None, inputLength], name="observations") #observations 
+    learningRatePh = tf.placeholder(dtype=dtype, shape=None, name="learningRatePh")#learning rate placeholder, used when TRPO+ is enabled
     
     if discreteActionsSpace:
         aPh = tf.placeholder(dtype=tf.int32, shape=[None,1], name="actions") #actions taken
@@ -122,27 +130,33 @@ with tf.Session(graph=graph) as sess:
         oldActionLogStdPh = tf.placeholder(dtype=dtype, shape=[None,outputLength], name="actionsLogStdOld") 
         additionalInfoLengths = [outputLength, outputLength]
     
-    buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, additionalInfoLengths)
+    buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, additionalInfoLengths, args.plus)
    
     #definition of networks
-    V = StateValueNetwork(sess, inputLength, args.hidden_layers_state_value, args.learning_rate_state_value, obsPh) #this network has method for training, but it is never used. Instead, training is done outside of this class
+    orthogonalInitializtionV=[2**0.5]*len(args.hidden_layers_state_value) + [1] if args.plus else False
+    orthogonalInitializtionP=[2**0.5]*len(args.hidden_layers_policy) + [0.01] if args.plus else False
+    V = StateValueNetwork(sess, inputLength, args.hidden_layers_state_value, args.learning_rate_state_value, obsPh, orthogonalInitializtion=orthogonalInitializtionV) #this network has method for training, but it is never used. Instead, training is done outside of this class
     if(discreteActionsSpace):
-        policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig") #policy network for discrete action space
+        policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig", orthogonalInitializtion=orthogonalInitializtionP) #policy network for discrete action space
     else:          
         policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [None]    
-        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=-0.5*np.ones((1,outputLength), dtype=dtypeNp), logStdTrainable=False)
+        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=-0.5*np.ones((1,outputLength), dtype=dtypeNp), logStdTrainable=False, orthogonalInitializtion=orthogonalInitializtionP)
       
     #definition of losses to optimize
     ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
     Lloss = -tf.reduce_mean(ratio*advPh) # - sign because we want to maximize our objective
-    stateValueLoss = tf.reduce_mean((V.output - returnsPh)**2)
+    if args.plus:
+        targetOutput = tf.clip_by_value(V.output, VPrev-args.eps, VPrev+args.eps)      
+    else:
+        targetOutput = V.output
+    stateValueLoss = tf.reduce_mean((targetOutput - returnsPh)**2)
     
     if(discreteActionsSpace):
         KLcontraint = utils.categorical_kl(policy.logProbs, logProbsAllPh) 
     else:
         KLcontraint = utils.diagonal_gaussian_kl(policy.actionMean, policy.actionLogStd, oldActionMeanPh, oldActionLogStdPh)     
     
-    svfOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_state_value).minimize(stateValueLoss)
+    svfOptimizationStep = tf.train.AdamOptimizer(learning_rate = learningRatePh if args.plus else args.learning_rate_state_value).minimize(stateValueLoss)
     
     #other ops
     suffix = "ContinuousOrig"
@@ -199,14 +213,14 @@ with tf.Session(graph=graph) as sess:
                     summaryRet, summaryLen = sess.run([epRewSum, epLenSum], feed_dict = {epRewPh:epRet, epLenPh:epLen})
                     writer.add_summary(summaryRet, finishedEp)
                     writer.add_summary(summaryLen, finishedEp)                    
-                    finishedEp += 1
+                finishedEp += 1
                 obs, epLen, epRet = env.reset(), 0, 0 
         simulationEnd = time.time()      
         
         print("\tSimulation in epoch {} finished in {}".format(e, simulationEnd-epochSt))  
             
         #update policy and update state-value(multiple times) after that
-        observations, actions, advEst, sampledLogProb, returns, additionalInfos = buffer.get()
+        observations, actions, advEst, sampledLogProb, returns, Vprevs, additionalInfos = buffer.get()
             
         policyUpdateStart = time.time()  
         if discreteActionsSpace:
@@ -219,8 +233,9 @@ with tf.Session(graph=graph) as sess:
         newDir = utils.conjugate_gradients(Hx, grad, args.cg_iters)    
         cjEnd = time.time()
         
+        curDelta = utils.annealedNoise(args.delta,args.delta_final,args.epochs,e)
         LlossOld = sess.run(Lloss , feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb})#, logProbsAllPh : allLogProbs})#L function inputs: observations, advantages estimated, logProb of sampled action, logProbsOfAllActions              
-        coef = np.sqrt(2*args.delta/(np.dot(np.transpose(newDir),Hx(newDir)) + 1e-8))
+        coef = np.sqrt(2*curDelta/(np.dot(np.transpose(newDir),Hx(newDir)) + 1e-8))
         
         oldParams = sess.run(getPolicyParams)
         
@@ -237,7 +252,7 @@ with tf.Session(graph=graph) as sess:
             else:
                 kl, LlossNew = sess.run([KLcontraint, Lloss],  feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1]})#same as L function inputs plus
             
-            if (kl <= args.delta and LlossNew <= LlossOld):
+            if (kl <= curDelta and LlossNew <= LlossOld):
                 break
             
             if(j == args.max_iters_line_search - 1):
@@ -259,10 +274,17 @@ with tf.Session(graph=graph) as sess:
                 start = 0
                 while(start < total):    
                     end = np.amin([start+svfTrainInBatchesThreshold, total])
-                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], returnsPh : returns[perm[start:end]]})
+                    if args.plus:
+                        sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], returnsPh : returns[perm[start:end]], VPrev : Vprevs[perm[start:end]], learningRatePh: utils.annealedNoise(args.learning_rate_state_value,0,args.epochs,e)})
+                    else:
+                        sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], returnsPh : returns[perm[start:end]], VPrev : Vprevs[perm[start:end]]})
+                    
                     start = end
             else:
-                sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm], returnsPh : returns[perm]})
+                if args.plus:
+                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm], returnsPh : returns[perm], VPrev : Vprevs[perm], learningRatePh:utils.annealedNoise(args.learning_rate_state_value,0,args.epochs,e)})
+                else:
+                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm], returnsPh : returns[perm], VPrev : Vprevs[perm]})
          
         svfUpdateEnd = time.time()     
         
@@ -275,12 +297,12 @@ with tf.Session(graph=graph) as sess:
             SVLossSum = 0
             while(start < total):    
                 end = np.amin([start+2*svfTrainInBatchesThreshold, total])
-                avgBatch = sess.run(stateValueLoss, feed_dict={obsPh : observations[start:end], returnsPh : returns[start:end]})
+                avgBatch = sess.run(stateValueLoss, feed_dict={obsPh : observations[start:end], returnsPh : returns[start:end], VPrev : Vprevs[start:end]})
                 SVLossSum += avgBatch*(end-start)
                 start = end
             SVLoss = SVLossSum/observations.shape[0]
         else:
-            SVLoss = sess.run(stateValueLoss, feed_dict={obsPh : observations, returnsPh : returns})            
+            SVLoss = sess.run(stateValueLoss, feed_dict={obsPh : observations, returnsPh : returns, VPrev : Vprevs})            
            
         svLossEnd = time.time()      
         
