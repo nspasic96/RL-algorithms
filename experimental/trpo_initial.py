@@ -1,6 +1,7 @@
 import argparse
 import gym
 import pybulletgym
+import EnvironmentWrapper
 import numpy as np
 import tensorflow as tf
 import time
@@ -71,7 +72,9 @@ if not args.seed:
 graph = tf.Graph()
 with tf.Session(graph=graph) as sess:
 
-    env = gym.make(args.gym_id)        
+    env = gym.make(args.gym_id) 
+    if args.plus:
+        env = EnvironmentWrapper(env.env, False, False, [-10.0,10.0], [-10.0,10.0])         
     np.random.seed(args.seed)
     env.seed(args.seed)
     env.action_space.seed(args.seed)
@@ -96,7 +99,8 @@ with tf.Session(graph=graph) as sess:
     KLSum = tf.summary.scalar('kl_divergence', KLPh)  
             
     implSuffix = "initital"
-    experimentName = f"{args.gym_id}__trpo_{implSuffix}__{args.seed}__{int(time.time())}"
+    prefix = "plus-" if args.plus else ""
+    experimentName = f"{prefix}{args.gym_id}__trpo_{implSuffix}__{args.seed}__{int(time.time())}"
     writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
     
     if args.wandb_log:
@@ -156,7 +160,10 @@ with tf.Session(graph=graph) as sess:
     else:
         KLcontraint = utils.diagonal_gaussian_kl(policy.actionMean, policy.actionLogStd, oldActionMeanPh, oldActionLogStdPh)     
     
-    svfOptimizationStep = tf.train.AdamOptimizer(learning_rate = learningRatePh if args.plus else args.learning_rate_state_value).minimize(stateValueLoss)
+    optimizer = tf.train.AdamOptimizer(learning_rate = learningRatePh if args.plus else args.learning_rate_state_value)
+    valGradients, valVaribales = zip(*optimizer.compute_gradients(stateValueLoss))  
+    valGradients, _ = tf.clip_by_global_norm(valGradients, 1.)       
+    svfOptimizationStep = optimizer.apply_gradients(zip(valGradients, valVaribales))
     
     #other ops
     suffix = "ContinuousOrig"
