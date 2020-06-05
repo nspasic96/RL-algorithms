@@ -1,7 +1,6 @@
 import argparse
 import gym
 import pybulletgym
-import EnvironmentWrapper
 import numpy as np
 import tensorflow as tf
 import time
@@ -11,17 +10,24 @@ import sys
 sys.path.append("../")
 
 import utils
+from EnvironmentWrapper import EnvironmentWrapper
 from networks import StateValueNetwork, PolicyNetworkDiscrete, PolicyNetworkContinuous
 from GAEBuffer import GAEBuffer
+from Statistics import Statistics
 
 parser = argparse.ArgumentParser(description='TRPO')
 
+
+
+
 parser.add_argument('--gym-id', type=str, default="Pong-ram-v0",
                    help='the id of the gym environment')
-parser.add_argument('--plus', type=bool, default=False,
+parser.add_argument('--plus', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to add code optimizations 1-3')
 parser.add_argument('--eps', type=float, default=0.2,
                    help='epsilon for clipping in for code optimization')
+parser.add_argument('--grad_clip', type=float, default=1. ,
+                   help='gradient l2 norm, used for TRPO+ only')
 parser.add_argument('--seed', type=int,
                    help='seed of the experiment')
 parser.add_argument('--epochs', type=int, default=1000,
@@ -56,10 +62,16 @@ parser.add_argument('--max_episode_len', type=int, default=1000,
                    help="max length of one episode")
 parser.add_argument('--wandb_projet_name', type=str, default="trust-region-policy-optimization",
                    help="the wandb's project name")
-parser.add_argument('--wandb_log', type=bool, default=False,
+parser.add_argument('--wandb_log', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to log results to wandb')
-parser.add_argument('--play_every_nth_epoch', type=int, default=10,
-                   help='every nth epoch will be rendered, set to epochs+1 not to render at all')
+parser.add_argument('--test_every_n_epochs', type=int, default=5,
+                   help='after every n episodes agent without noise will be tested')
+parser.add_argument('--test_episodes', type=int, default=20,
+                   help='when testing, test_episodes will be played and taken for calculting statistics')
+parser.add_argument('--render', type=lambda x: (str(x).lower() == 'true'), default=True,
+                   help='whether to render agent when it is being tested')
+parser.add_argument('--run_statistics', type=lambda x: (str(x).lower() == 'true'), default=True,
+                   help='whether to run statistics, necessary if testing agent')
 args = parser.parse_args()
 
 svfTrainInBatchesThreshold = 5000
@@ -71,10 +83,10 @@ if not args.seed:
  
 graph = tf.Graph()
 with tf.Session(graph=graph) as sess:
-
+    
     env = gym.make(args.gym_id) 
     if args.plus:
-        env = EnvironmentWrapper(env.env, False, False, [-10.0,10.0], [-10.0,10.0])         
+        env = EnvironmentWrapper(env.env, normOb=False, centerRew=False, scaleRew=False, gamma=args.gamma, clipOb=10., clipRew=10., episodicScale=True)         
     np.random.seed(args.seed)
     env.seed(args.seed)
     env.action_space.seed(args.seed)
@@ -86,12 +98,14 @@ with tf.Session(graph=graph) as sess:
     inputLength = env.observation_space.shape[0]
     outputLength = env.action_space.n if discreteActionsSpace else env.action_space.shape[0]
     
-    #summeries placeholders and summery scalar objects
+    #summeries placeholders and summery scalar objects      
+    epRewLatestMeanPh = tf.placeholder(tf.float32, shape=None, name='episode_reward_latest_mean_summary')
     epRewPh = tf.placeholder(dtype, shape=None, name='episode_reward_summary')
     epLenPh = tf.placeholder(dtype, shape=None, name='episode_length_summary')
     SVLossPh = tf.placeholder(dtype, shape=None, name='value_function_loss_summary')
     SurrogateDiffPh = tf.placeholder(dtype, shape=None, name='surrogate_function_value_summary')
     KLPh = tf.placeholder(dtype, shape=None, name='kl_divergence_summary')
+    epRewLatestMeanSum = tf.summary.scalar('episode_reward_latest_mean', epRewLatestMeanPh)
     epRewSum = tf.summary.scalar('episode_reward', epRewPh)
     epLenSum = tf.summary.scalar('episode_length', epLenPh)
     SVLossSummary = tf.summary.scalar('value_function_loss', SVLossPh)
@@ -115,6 +129,13 @@ with tf.Session(graph=graph) as sess:
             note = "State value training split in batches of size {} because of too large number of samples".format(svfTrainInBatchesThreshold)
         wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, notes=note, tensorboard=True)
     
+    if args.run_statistics:
+        statSizeRew = args.test_episodes
+
+        statistics = []
+        statistics.append(Statistics(statSizeRew, 1, "rewards"))
+
+    
     #definition of placeholders
     logProbSampPh = tf.placeholder(dtype = dtype, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
     advPh = tf.placeholder(dtype = dtype, shape=[None], name="advantages") #advantages obtained using GAE-lambda and values obtainet from StateValueNetwork V
@@ -134,7 +155,7 @@ with tf.Session(graph=graph) as sess:
         oldActionLogStdPh = tf.placeholder(dtype=dtype, shape=[None,outputLength], name="actionsLogStdOld") 
         additionalInfoLengths = [outputLength, outputLength]
     
-    buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, additionalInfoLengths, args.plus)
+    buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, additionalInfoLengths)
    
     #definition of networks
     orthogonalInitializtionV=[2**0.5]*len(args.hidden_layers_state_value) + [1] if args.plus else False
@@ -149,10 +170,13 @@ with tf.Session(graph=graph) as sess:
     #definition of losses to optimize
     ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
     Lloss = -tf.reduce_mean(ratio*advPh) # - sign because we want to maximize our objective
+    
+    """
     if args.plus:
         targetOutput = tf.clip_by_value(V.output, VPrev-args.eps, VPrev+args.eps)      
     else:
-        targetOutput = V.output
+    """
+    targetOutput = V.output
     stateValueLoss = tf.reduce_mean((targetOutput - returnsPh)**2)
     
     if(discreteActionsSpace):
@@ -160,10 +184,13 @@ with tf.Session(graph=graph) as sess:
     else:
         KLcontraint = utils.diagonal_gaussian_kl(policy.actionMean, policy.actionLogStd, oldActionMeanPh, oldActionLogStdPh)     
     
-    optimizer = tf.train.AdamOptimizer(learning_rate = learningRatePh if args.plus else args.learning_rate_state_value)
-    valGradients, valVaribales = zip(*optimizer.compute_gradients(stateValueLoss))  
-    valGradients, _ = tf.clip_by_global_norm(valGradients, 1.)       
-    svfOptimizationStep = optimizer.apply_gradients(zip(valGradients, valVaribales))
+    if args.plus:
+        optimizer = tf.train.AdamOptimizer(learning_rate = learningRatePh)    
+        valGradients, valVaribales = zip(*optimizer.compute_gradients(stateValueLoss))  
+        valGradients, _ = tf.clip_by_global_norm(valGradients, args.grad_clip)       
+        svfOptimizationStep = optimizer.apply_gradients(zip(valGradients, valVaribales))
+    else:
+        svfOptimizationStep = tf.train.AdamOptimizer(args.learning_rate_state_value).minimize(stateValueLoss)
     
     #other ops
     suffix = "ContinuousOrig"
@@ -185,15 +212,13 @@ with tf.Session(graph=graph) as sess:
     
     #algorithm
     finishedEp = 0
+    evaluationNum = 0
     for e in range(args.epochs):    
         print("Epoch {} started".format(e))
         obs, epLen, epRet = env.reset(), 0, 0
         
         epochSt = time.time()
         for l in range(args.epoch_len):
-            
-            if(e % args.play_every_nth_epoch == args.play_every_nth_epoch - 1):
-                env.render()
             
             if discreteActionsSpace:
                 sampledAction, logProbSampledAction, logProbsAll = policy.getSampledActions(np.expand_dims(obs, 0))
@@ -204,9 +229,9 @@ with tf.Session(graph=graph) as sess:
                 
             predictedV = V.forward(np.expand_dims(obs, 0))
             
-            nextObs, reward, terminal, _ = env.step(sampledAction[0])  
+            nextObs, reward, terminal, infos = env.step(sampledAction[0])  
             epLen += 1
-            epRet += reward
+            epRet += infos["origRew"] if args.plus else reward
             buffer.add(obs, sampledAction[0], predictedV[0][0], logProbSampledAction, reward, additionalInfos)
             obs = nextObs
     
@@ -221,7 +246,8 @@ with tf.Session(graph=graph) as sess:
                     writer.add_summary(summaryRet, finishedEp)
                     writer.add_summary(summaryLen, finishedEp)                    
                 finishedEp += 1
-                obs, epLen, epRet = env.reset(), 0, 0 
+                obs, epLen, epRet = env.reset(), 0, 0
+                
         simulationEnd = time.time()      
         
         print("\tSimulation in epoch {} finished in {}".format(e, simulationEnd-epochSt))  
@@ -289,7 +315,7 @@ with tf.Session(graph=graph) as sess:
                     start = end
             else:
                 if args.plus:
-                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm], returnsPh : returns[perm], VPrev : Vprevs[perm], learningRatePh:utils.annealedNoise(args.learning_rate_state_value,0,args.epochs,e)})
+                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm], returnsPh : returns[perm], VPrev : Vprevs[perm], learningRatePh:utils.annealedNoise(args.learning_rate_state_value,args.learning_rate_state_value*(1e-6),args.epochs,e)})
                 else:
                     sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm], returnsPh : returns[perm], VPrev : Vprevs[perm]})
          
@@ -323,6 +349,28 @@ with tf.Session(graph=graph) as sess:
         
         epochEnd = time.time()
         print("Epoch {} ended in {}".format(e, epochEnd-epochSt))
+        
+        if(e % args.test_every_n_epochs == 0):
+            evaluationNum += 1
+            print("Testing agent without noise for {} episodes after {} epochs".format(args.test_episodes, e))
+            for _ in range(args.test_episodes):
+                osbTest = env.reset()
+                testRet = 0
+                for _ in range(args.max_episode_len):
+                    if args.render:
+                        env.render()
+                    _, _, sampledActionTest, _ = policy.getSampledActions(np.expand_dims(osbTest, 0))  
+                    nextOsbTest, reward, terminalTest, _ = env.step(sampledActionTest[0])
+                    testRet += infos["origRew"] if args.plus else reward
+                    osbTest = nextOsbTest
+                    if terminalTest:
+                        break  
+                statistics[0].addValue(np.asarray([[testRet]]))
+                
+            meanLatest = statistics[0].getMeans()[0]
+            summaryLatestRet = sess.run(epRewLatestMeanSum, feed_dict = {epRewLatestMeanPh:meanLatest})
+            writer.add_summary(summaryLatestRet, evaluationNum)      
+        
     
     writer.close()
     env.close()
