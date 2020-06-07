@@ -15,45 +15,62 @@ class RunningMeanStd():
         self.mean, self.var, self.count = updateMeanVarCountFromMoments(self.mean, self.var, self.count, batchMean, batchVar, batchCount)
 
 class EnvironmentWrapper(gym.core.Wrapper):
-    def __init__(self, env, normOb=True, centerRew=True, scaleRew=True, gamma=-1, clipOb=10., clipRew=10., episodicScale=True):
+    """
+    There are 3 values that reward normalization can take:
+        1. none : Do Nothing, return the reward as it is
+        2. returns : Track auxiliary current reward(self.ret) and update it in every step by multiplying old value with gamma and adding 
+            new "raw" reward to it. Reward returen by environment wrapper is diveded by variance of all auxiliary current rewards
+        3. rewards : subtract mean and divide by variance(both are optional and can be set with parameters, defaults are True) 
+    """
+    def __init__(self, env, normOb=True, rewardNormalization=None, clipOb=10., clipRew=10., episodicMeanVar=True, **kwargs):
+        
         super(EnvironmentWrapper, self).__init__(env)
         self.env = env
         self.normOb = normOb
-        self.centerRew = centerRew
-        self.scaleRew = scaleRew
-        self.gamma = gamma
-        if self.gamma > 0:
-            self.ret = 0
-        self.episodicScale = episodicScale
+        self.rewardNormalization = rewardNormalization
         self.clipOb = clipOb
         self.clipRew = clipRew
+        self.episodicMeanVar = episodicMeanVar
+        
         if(normOb):
             self.obsRMS = RunningMeanStd(shape=self.observation_space.shape)
-        if(centerRew or scaleRew or gamma > 0):
+        if(rewardNormalization is not None):
             self.rewRMS = RunningMeanStd(shape=(1,))
-            
-        assert self.gamma <= 0 or (self.centerRew == False and self.scaleRew == False)
+         
+        assert (self.rewardNormalization is None or self.rewardNormalization in ["returns", "rewards"])
+        if self.rewardNormalization is not None:
+            if self.rewardNormalization == "returns": 
+                self.gamma = kwargs.get('gamma',0.99)
+                self.ret = 0       
+            elif self.rewardNormalization == "rewards": 
+                self.centerRew = kwargs.get('centerRew',True)  
+                self.scaleRew = kwargs.get('scaleRew',True)      
     
     def step(self,action):
-        if(self.gamma > 0):
-            return self.clippingWithGamma(action)
-        else:
-            return self.normalClipping(action)
+        
+        origObs, origRew, origTer, infos = self.env.step(action)
+
+        obs = origObs
+        rew = origRew
+        infos["origRew"] = rew
+                
+        if(self.normOb):
+            self.obsRMS.update(origObs)
+            obs = np.clip((origObs - self.obsRMS.mean)/(self.obsRMS.var + 1e-8),-self.clipOb,self.clipOb)
+
+        if(self.rewardNormalization == "returns"):
+            rew = self.rewardReturns(rew, infos)
+        elif(self.rewardNormalization == "rewards"):
+            rew = self.rewardRewards(rew, infos)
+        
+        return obs, rew, origTer, infos
+    
     """
     "Incorrect" reward normalization [copied from OAI code] Incorrect in the sense that we 
     1. update return
     2. divide reward by std(return) *without* subtracting and adding back mean
     """
-    def clippingWithGamma(self, action):
-        origObs, origRew, origTer, infos = self.env.step(action)
-
-        obs = origObs
-        rew = origRew
-        ter = origTer
-
-        if(self.normOb):
-            self.obsRMS.update(origObs)
-            obs = np.clip((origObs - self.obsRMS.mean)/(self.obsRMS.var + 1e-8),-self.clipOb,self.clipOb)
+    def rewardReturns(self, rew, infos):
         
         self.ret = self.ret * self.gamma + rew
         self.rewRMS.update(np.array([self.ret]))  
@@ -62,20 +79,10 @@ class EnvironmentWrapper(gym.core.Wrapper):
         
         if(self.clipRew > 0):
             rew = np.clip(rew,-self.clipRew,self.clipRew)[0]
-            infos['origRew'] = origRew
 
-        return obs, rew, ter, infos
+        return rew
     
-    def normalClipping(self, action):
-        origObs, origRew, origTer, infos = self.env.step(action)
-
-        obs = origObs
-        rew = origRew
-        ter = origTer
-
-        if(self.normOb):
-            self.obsRMS.update(origObs)
-            obs = np.clip((origObs - self.obsRMS.mean)/(self.obsRMS.var + 1e-8),-self.clipOb,self.clipOb)
+    def rewardRewards(self, rew, infos):
         
         self.rewRMS.update(np.array([rew]))  
         if(self.centerRew):
@@ -89,17 +96,16 @@ class EnvironmentWrapper(gym.core.Wrapper):
                 rew = diff + self.rewRMS.mean            
         if(self.clipRew > 0):
             rew = np.clip(rew,-self.clipRew,self.clipRew)[0]
-            infos['origRew'] = origRew
 
-        return obs, rew, ter, infos
+        return rew
 
     def reset(self):
         obs = self.env.reset()
         
-        if self.episodicScale:            
+        if self.episodicMeanVar:            
             if(self.normOb):
                 self.obsRMS = RunningMeanStd(shape=self.observation_space.shape)
-            if(self.centerRew or self.scaleRew or self.gamma > 0):
+            if(self.rewardNormalization is not None):
                 self.rewRMS = RunningMeanStd(shape=(1,))
             self.rew = 0
             
