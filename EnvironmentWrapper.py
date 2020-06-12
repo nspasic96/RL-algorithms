@@ -22,7 +22,7 @@ class EnvironmentWrapper(gym.core.Wrapper):
             new "raw" reward to it. Reward returen by environment wrapper is diveded by variance of all auxiliary current rewards
         3. rewards : subtract mean and divide by variance(both are optional and can be set with parameters, defaults are True) 
     """
-    def __init__(self, env, normOb=True, rewardNormalization=None, clipOb=10., clipRew=10., episodicMeanVar=True, **kwargs):
+    def __init__(self, env, normOb=True, rewardNormalization=None, clipOb=10., clipRew=10., episodicMeanVarObs=False, episodicMeanVarRew=False, **kwargs):
         
         super(EnvironmentWrapper, self).__init__(env)
         self.env = env
@@ -30,12 +30,11 @@ class EnvironmentWrapper(gym.core.Wrapper):
         self.rewardNormalization = rewardNormalization
         self.clipOb = clipOb
         self.clipRew = clipRew
-        self.episodicMeanVar = episodicMeanVar
+        self.episodicMeanVarObs = episodicMeanVarObs
+        self.episodicMeanVarRew = episodicMeanVarRew
         
-        if(normOb):
-            self.obsRMS = RunningMeanStd(shape=self.observation_space.shape)
-        if(rewardNormalization is not None):
-            self.rewRMS = RunningMeanStd(shape=(1,))
+        self.obsRMS = RunningMeanStd(shape=self.observation_space.shape)
+        self.rewRMS = RunningMeanStd(shape=(1,))
          
         assert (self.rewardNormalization is None or self.rewardNormalization in ["returns", "rewards"])
         if self.rewardNormalization is not None:
@@ -62,6 +61,9 @@ class EnvironmentWrapper(gym.core.Wrapper):
             rew = self.rewardReturns(rew, infos)
         elif(self.rewardNormalization == "rewards"):
             rew = self.rewardRewards(rew, infos)
+
+        if origTer:
+            self.ret = 0
         
         return obs, rew, origTer, infos
     
@@ -73,7 +75,7 @@ class EnvironmentWrapper(gym.core.Wrapper):
     def rewardReturns(self, rew, infos):
         
         self.ret = self.ret * self.gamma + rew
-        self.rewRMS.update(np.array([self.ret]))  
+        self.rewRMS.update(np.array([self.ret]).copy())  
         
         rew = rew / (self.rewRMS.var + 1e-8)
         
@@ -102,16 +104,15 @@ class EnvironmentWrapper(gym.core.Wrapper):
     def reset(self):
         obs = self.env.reset()
         
-        if self.episodicMeanVar:            
-            if(self.normOb):
-                self.obsRMS = RunningMeanStd(shape=self.observation_space.shape)
-            if(self.rewardNormalization is not None):
-                self.rewRMS = RunningMeanStd(shape=(1,))
-            self.rew = 0
+        if self.episodicMeanVarObs:            
+            self.obsRMS = RunningMeanStd(shape=self.observation_space.shape)
+        if(self.episodicMeanVarRew):
+            self.rewRMS = RunningMeanStd(shape=(1,))
             
         if(self.normOb):
             self.obsRMS.update(obs)
             obs = np.clip((obs - self.obsRMS.mean)/(self.obsRMS.var + 1e-8),-self.clipOb,self.clipOb)
+
         return obs
 
              

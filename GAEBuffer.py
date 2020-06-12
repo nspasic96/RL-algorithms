@@ -4,7 +4,7 @@ import numpy as np
 
 class GAEBuffer:
     
-    def __init__(self, gamma, lamb, size, obsLen, actLen, additionalInfoLengths):
+    def __init__(self, gamma, lamb, size, obsLen, actLen, advantageNorm, additionalInfoLengths):
         self.currentIdx, self.pathStartIdx = 0, 0
         self.gamma = gamma
         self.lamb = lamb
@@ -16,6 +16,7 @@ class GAEBuffer:
         self.rewardsBuff = np.zeros(size)
         self.advantagesBuff = np.zeros(size)
         self.returnsBuff = np.zeros(size)
+        self.advantageNorm=advantageNorm
         
         self.additionalInfos = [np.zeros((size, l)) for l in additionalInfoLengths]
                    
@@ -57,7 +58,10 @@ class GAEBuffer:
 
         deltas = pathRews[:-1] + self.gamma*pathPredVals[1:] - pathPredVals[:-1]        
         self.advantagesBuff[path_slice] = utils.disount_cumsum(deltas, self.gamma * self.lamb) 
-        self.returnsBuff[path_slice] = utils.disount_cumsum(pathRews, self.gamma)[:-1]
+        self.returnsBuff[path_slice] = self.advantagesBuff[path_slice]+self.predValsBuff[path_slice]
+        # Advantage normalization
+        if self.advantageNorm:
+            self.advantagesBuff[path_slice] = (self.advantagesBuff[path_slice] - self.advantagesBuff[path_slice].mean()) / (self.advantagesBuff[path_slice].std() + 1e-10)
 
         self.pathStartIdx = self.currentIdx 
 

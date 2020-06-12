@@ -5,6 +5,7 @@ import numpy as np
 import tensorflow as tf
 import time
 import wandb
+import os
 
 import sys
 sys.path.append("../")
@@ -22,14 +23,16 @@ parser.add_argument('--gym-id', type=str, default="HopperPyBulletEnv-v0",
                    help='the id of the gym environment')
 parser.add_argument('--seed', type=int,
                    help='seed of the experiment')
-parser.add_argument('--epochs', type=int, default=1000,
+parser.add_argument('--epochs', type=int, default=500,
                    help="epochs to train")
-parser.add_argument('--epoch_len', type=int, default=4000,
+parser.add_argument('--epoch_len', type=int, default=2048,
                    help="length of one epoch")
 parser.add_argument('--max_episode_len', type=int, default=1000,
                    help="max length of one episode")
 parser.add_argument('--gamma', type=float, default=0.99,
                    help='the discount factor gamma')
+parser.add_argument('--lambd', type=float, default=0.95,
+                   help='lambda for GAE-Lambda')
 parser.add_argument('--learning_rate_state_value', type=float, default=1e-3,
                    help='learning rate of the optimizer of state-value function')
 parser.add_argument('--learning_rate_policy', type=float, default=3e-4,
@@ -38,8 +41,10 @@ parser.add_argument('--hidden_layers_state_value', type=int, nargs='+', default=
                    help='hidden layers size in state value network')
 parser.add_argument('--hidden_layers_policy', type=int, nargs='+', default=[64,64],
                    help='hidden layers size in policy network')
-parser.add_argument('--lambd', type=float, default=0.97,
-                   help='lambda for GAE-Lambda')
+parser.add_argument('--policy_network_batch_size', type=int, default=64,
+                   help="batch size for policy network optimization")
+parser.add_argument('--value_function_batch_size', type=int, default=64,
+                   help='batch size for value function network')
 
 #WANDB parameters
 parser.add_argument('--wandb_projet_name', type=str, default="trust-region-policy-optimization",
@@ -52,7 +57,7 @@ parser.add_argument('--test_every_n_epochs', type=int, default=5,
                    help='after every n episodes agent without noise will be tested')
 parser.add_argument('--test_episodes', type=int, default=20,
                    help='when testing, test_episodes will be played and taken for calculting statistics')
-parser.add_argument('--render', type=lambda x: (str(x).lower() == 'true'), default=True,
+parser.add_argument('--render', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to render agent when it is being tested')
 parser.add_argument('--run_statistics', type=lambda x: (str(x).lower() == 'true'), default=True,
                    help='whether to run statistics, necessary if testing agent')
@@ -72,22 +77,23 @@ parser.add_argument('--max_iters_line_search', type=int, default=10,
                    help="maximum steps to take in line serach")
 parser.add_argument('--alpha', type=float, default=0.8,
                    help="defult step size in line serach")
+parser.add_argument('--norm_adv', type=lambda x: (str(x).lower() == 'true'), default=True,
+                   help="whether to normalize advantages in GAE buffer")
 
 #parameters related to TRPO+
 parser.add_argument('--plus', type=lambda x: (str(x).lower() == 'true'), default=False,
-                   help='whether to add code optimizations 1-3')
+                   help='whether to add code optimizations 1-4')
 parser.add_argument('--plus_returns', type=lambda x: (str(x).lower() == 'true'), default=True,
                    help='whether to return returns instead of reward for training')
 parser.add_argument('--plus_initialization', type=lambda x: (str(x).lower() == 'true'), default=True,
                    help='whether to initialize weights with orthogonal initializer')
 parser.add_argument('--plus_eps', type=float, default=0.2,
-                   help='epsilon for clipping in for code optimization, negative value to turn it off')
+                   help='epsilon for clipping value function, negative value to turn it off')
 parser.add_argument('--plus_grad_clip', type=float, default=1. ,
                    help='gradient l2 norm, negative value to turn it off')
 
 args = parser.parse_args()
 
-svfTrainInBatchesThreshold = 5000
 dtype = tf.float32
 dtypeNp = np.float32
 
@@ -99,7 +105,7 @@ with tf.Session(graph=graph) as sess:
     
     env = gym.make(args.gym_id) 
     if args.plus and args.plus_returns:
-        env = EnvironmentWrapper(env.env, normOb=False, rewardNormalization="returns", clipOb=10., clipRew=10., episodicMeanVar=True, gamma=args.gamma)         
+        env = EnvironmentWrapper(env.env, normOb=False, rewardNormalization="returns", clipOb=10., clipRew=10., episodicMeanVarObs=False, episodicMeanVarRew=False, gamma=args.gamma)         
     else:
         env = EnvironmentWrapper(env.env, normOb=False, rewardNormalization=None, clipOb=1000000., clipRew=1000000)    
         
@@ -115,23 +121,23 @@ with tf.Session(graph=graph) as sess:
     outputLength = env.action_space.n if discreteActionsSpace else env.action_space.shape[0]
     
     #summeries placeholders and summery scalar objects      
-    epRewLatestMeanPh = tf.placeholder(tf.float32, shape=None, name='episode_test_real_reward_latest_mean_summary')
-    epRewPh = tf.placeholder(dtype, shape=None, name='episode_reward_train_summary')
+    epRewTestPh = tf.placeholder(tf.float32, shape=None, name='episode_test_real_reward_latest_mean_summary')
+    epTotalRewPh = tf.placeholder(dtype, shape=None, name='episode_reward_train_summary')
     epLenPh = tf.placeholder(dtype, shape=None, name='episode_length_train_summary')
     SVLossPh = tf.placeholder(dtype, shape=None, name='value_function_loss_summary')
     SurrogateDiffPh = tf.placeholder(dtype, shape=None, name='surrogate_function_value_summary')
     KLPh = tf.placeholder(dtype, shape=None, name='kl_divergence_summary')
-    epRewLatestMeanSum = tf.summary.scalar('episode_test_reward_latest_mean', epRewLatestMeanPh)
-    epRewSum = tf.summary.scalar('episode_reward_train', epRewPh)
+    epRewLatestMeanSum = tf.summary.scalar('episode_test_reward_latest_mean', epRewTestPh)
+    epTotalRewSum = tf.summary.scalar('episode_reward_train', epTotalRewPh)
     epLenSum = tf.summary.scalar('episode_length_train', epLenPh)
     SVLossSummary = tf.summary.scalar('value_function_loss', SVLossPh)
     SurrogateDiffSum = tf.summary.scalar('surrogate_function_value', SurrogateDiffPh)
     KLSum = tf.summary.scalar('kl_divergence', KLPh)  
       
     #logging details      
-    implSuffix = "initital"
+    implSuffix = os.path.basename(__file__).rstrip(".py")
     prefix = "plus-" if args.plus else ""
-    experimentName = f"{prefix}{args.gym_id}__trpo_{implSuffix}__{args.seed}__{int(time.time())}"
+    experimentName = f"{prefix}{args.gym_id}__{implSuffix}__{args.seed}__{int(time.time())}"
     writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
     
     if args.wandb_log:
@@ -141,10 +147,7 @@ with tf.Session(graph=graph) as sess:
         cnf['input_length'] = inputLength
         cnf['output_length'] = outputLength
         cnf['exp_name_tb'] = experimentName
-        note = ""
-        if(args.epoch_len > svfTrainInBatchesThreshold):
-            note = "State value training split in batches of size {} because of too large number of samples".format(svfTrainInBatchesThreshold)
-        wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, notes=note, tensorboard=True)
+        wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, tensorboard=True)
     
     #statistics to run
     if args.run_statistics:
@@ -152,7 +155,6 @@ with tf.Session(graph=graph) as sess:
 
         statistics = {}
         statistics["test_reward"] = Statistics(statSizeRew, 1, "test_reward")
-
     
     #definition of placeholders
     logProbSampPh = tf.placeholder(dtype = dtype, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
@@ -173,7 +175,7 @@ with tf.Session(graph=graph) as sess:
         oldActionLogStdPh = tf.placeholder(dtype=dtype, shape=[None,outputLength], name="actionsLogStdOld") 
         additionalInfoLengths = [outputLength, outputLength]
     
-    buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, additionalInfoLengths)
+    buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, args.norm_adv, additionalInfoLengths)
    
     #definition of networks
     orthogonalInitializtionV=[2**0.5]*len(args.hidden_layers_state_value) + [1] if (args.plus and args.plus_initialization) else False
@@ -183,7 +185,7 @@ with tf.Session(graph=graph) as sess:
         policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig", orthogonalInitializtion=orthogonalInitializtionP) #policy network for discrete action space
     else:          
         policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [None]    
-        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=-0.5*np.ones((1,outputLength), dtype=dtypeNp), logStdTrainable=False, orthogonalInitializtion=orthogonalInitializtionP)
+        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=logStdInit=np.zeros((1, outputLength), dtype=np.float32), logStdTrainable=True, orthogonalInitializtion=orthogonalInitializtionP)
       
     #definition of losses to optimize
     ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
@@ -231,7 +233,7 @@ with tf.Session(graph=graph) as sess:
     evaluationNum = 0
     for e in range(args.epochs):    
         print("Epoch {} started".format(e))
-        obs, epLen, epRet = env.reset(), 0, 0
+        obs, epLen, epTotalRew = env.reset().copy(), 0, 0
         
         epochSt = time.time()
         for l in range(args.epoch_len):
@@ -247,9 +249,9 @@ with tf.Session(graph=graph) as sess:
             
             nextObs, reward, terminal, infos = env.step(sampledAction[0])  
             epLen += 1
-            epRet += infos["origRew"]
+            epTotalRew += infos["origRew"]
             buffer.add(obs, sampledAction[0], predictedV[0][0], logProbSampledAction, reward, additionalInfos)
-            obs = nextObs
+            obs = nextObs.copy()
     
             done = terminal or epLen == args.max_episode_len
             if(done or l == args.epoch_len -1):
@@ -258,11 +260,11 @@ with tf.Session(graph=graph) as sess:
                 val = 0 if terminal else V.forward(np.expand_dims(obs, 0))
                 buffer.finishPath(val)
                 if terminal and args.wandb_log:
-                    summaryRet, summaryLen = sess.run([epRewSum, epLenSum], feed_dict = {epRewPh:epRet, epLenPh:epLen})
+                    summaryRet, summaryLen = sess.run([epTotalRewSum, epLenSum], feed_dict = {epTotalRewPh:epTotalRew, epLenPh:epLen})
                     writer.add_summary(summaryRet, finishedEp)
                     writer.add_summary(summaryLen, finishedEp)                    
-                finishedEp += 1                
-                obs, epLen, epRet = env.reset(), 0, 0
+                    finishedEp += 1                
+                obs, epLen, epTotalRew = env.reset().copy(), 0, 0
                 
         simulationEnd = time.time()      
         
@@ -317,23 +319,18 @@ with tf.Session(graph=graph) as sess:
         svfUpdateStart = time.time()   
         total = args.epoch_len
         for j in range(args.state_value_network_updates):
-            #5000 works as batch size, 10000 doesn't. For now, training is split so that no input exceeds 5000 examples
+
             perm = np.random.permutation(total)
-            if(total > svfTrainInBatchesThreshold):
-                start = 0
-                while(start < total):    
-                    end = np.amin([start+svfTrainInBatchesThreshold, total])
-                    if args.plus:
-                        sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalDiscountedRewardPh : returns[perm[start:end]], VPrev : Vprevs[perm[start:end]], learningRatePh: utils.annealedNoise(args.learning_rate_state_value,0,args.epochs,e)})
-                    else:
-                        sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalDiscountedRewardPh : returns[perm[start:end]], VPrev : Vprevs[perm[start:end]]})
-                    
-                    start = end
-            else:
+            start = 0
+            while(start < total):    
+                end = np.amin([start+args.value_function_batch_size, total])
                 if args.plus:
-                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm], totalDiscountedRewardPh : returns[perm], VPrev : Vprevs[perm], learningRatePh:utils.annealedNoise(args.learning_rate_state_value,args.learning_rate_state_value*(1e-6),args.epochs,e)})
+                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalDiscountedRewardPh : returns[perm[start:end]], VPrev : Vprevs[perm[start:end]], learningRatePh: utils.annealedNoise(args.learning_rate_state_value,0,args.epochs,e)})
                 else:
-                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm], totalDiscountedRewardPh : returns[perm], VPrev : Vprevs[perm]})
+                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalDiscountedRewardPh : returns[perm[start:end]], VPrev : Vprevs[perm[start:end]]})
+                    
+                start = end
+           
          
         svfUpdateEnd = time.time()     
         
@@ -341,6 +338,7 @@ with tf.Session(graph=graph) as sess:
            
         #after update, calculate new loss
         svLossStart = time.time()
+        svfTrainInBatchesThreshold = 5000
         if observations.shape[0] > 2*svfTrainInBatchesThreshold:
             start = 0
             SVLossSum = 0
@@ -383,7 +381,7 @@ with tf.Session(graph=graph) as sess:
                 statistics["test_reward"].addValue(np.asarray([[testRet]]))
                 
             meanLatest = statistics["test_reward"].getMeans()[0]
-            summaryLatestRet = sess.run(epRewLatestMeanSum, feed_dict = {epRewLatestMeanPh:meanLatest})
+            summaryLatestRet = sess.run(epRewLatestMeanSum, feed_dict = {epRewTestPh:meanLatest})
             writer.add_summary(summaryLatestRet, evaluationNum)      
         
     

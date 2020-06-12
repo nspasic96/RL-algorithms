@@ -169,7 +169,7 @@ class PolicyNetworkDiscrete:
 
 class PolicyNetworkContinuous:
     
-    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, hiddenLayerActivations, inputPh, actionsPh, suffix, actionMeanScale=None, logStdInit=None, logStdTrainable=True, clipLogStd=None, actionClip=None, squashAction=False, orthogonalInitializtion=False):
+    def __init__(self, sess, inputLength, outputLength, hiddenLaySizes, hiddenLayerActivations, inputPh, actionsPh, suffix, actionMeanScale=None, logStdInit=None, logStdTrainable=True, clipLogStd=None, actionClip=None, orthogonalInitializtion=False):
         self.inputLength = inputLength
         self.outputLength = outputLength
         self.input = inputPh
@@ -185,7 +185,6 @@ class PolicyNetworkContinuous:
         self.logStdInit = logStdInit
         #this applies only if logStds in not None
         self.logStdTrainable = logStdTrainable
-        self.squashAction = squashAction
         self.suffix = suffix
         self.variablesScope = "PolicyNetworkContinuous{}".format(suffix)
         self.orthogonalInitializtion = orthogonalInitializtion
@@ -197,6 +196,7 @@ class PolicyNetworkContinuous:
                 curNode = tf.layers.Dense(self.hiddenLayers[0], self.hiddenLayerActivations[0], kernel_initializer = tf.contrib.layers.xavier_initializer(),  name="fc1")(self.input)
             else:                
                 curNode = tf.layers.Dense(self.hiddenLayers[0], self.hiddenLayerActivations[0],kernel_initializer=tf.orthogonal_initializer(self.orthogonalInitializtion[0]), name="fc1")(self.input)
+            
             for i,l in enumerate(self.hiddenLayers[1:]):
                 if not self.orthogonalInitializtion:
                     curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i+1], kernel_initializer = tf.contrib.layers.xavier_initializer(), name="fc{}".format(i+2))(curNode)
@@ -232,19 +232,14 @@ class PolicyNetworkContinuous:
                 self.actionStd = tf.math.exp(self.actionLogStd)                
                 self.actionRaw = self.actionMean + tf.random_normal(tf.shape(self.actionMean)) * self.actionStd
             else:
-                self.actionRaw = self.actionMean
-
-            
-            #TODO: Check whether this work when squash=True(because gaussian_likelihood doesnt take it into consideration)
-            if self.squashAction: 
-                self.actionFinal = tf.tanh(self.actionRaw)
-            else:
-                self.actionFinal = self.actionRaw   
+                self.actionRaw = self.actionMean 
             
             if self.actionClip is not None: 
                 assert(self.actionClip.shape == (2, self.outputLength) )
                 self.actionFinal = tf.clip_by_value(self.actionFinal, self.actionClip[0,:], self.actionClip[1,:])
-
+            else:
+                self.actionFinal = self.actionRaw
+            
             if self.actionLogStd is not None:    
                 self.sampledLogProbs = utils.gaussian_likelihood(self.actionRaw, self.actionMean, self.actionLogStd)
                 self.logProbWithCurrParams = utils.gaussian_likelihood(self.actions, self.actionMean, self.actionLogStd)#log prob(joint, all action components are from gaussian) for action given the observation(both fed with placeholder)
