@@ -47,24 +47,28 @@ class EnvironmentWrapper(gym.core.Wrapper):
     
     def step(self,action):
         
-        origObs, origRew, origTer, infos = self.env.step(action)
+        #print("orig action was {}".format(action))
+        clip = np.zeros(shape=(2,self.env.action_space.shape[0]))
+        clip[0,:] = self.env.action_space.low
+        clip[1,:] = self.env.action_space.high        
+        clippedAction = np.clip(action, clip[0,:], clip[1,:])
+        #print("clipped action is {}".format(clippedAction))
+        origObs, origRew, origTer, infos = self.env.step(clippedAction)
 
         obs = origObs
         rew = origRew
-        infos["origRew"] = rew
+        infos["origRew"] = origRew
                 
         if(self.normOb):
             self.obsRMS.update(origObs)
-            obs = np.clip((origObs - self.obsRMS.mean)/(self.obsRMS.var + 1e-8),-self.clipOb,self.clipOb)
+            obs = np.clip((origObs - self.obsRMS.mean)/np.sqrt(self.obsRMS.var + 1e-8),-self.clipOb,self.clipOb)
 
         if(self.rewardNormalization == "returns"):
-            rew = self.rewardReturns(rew, infos)
+            rew = self.rewardReturns(rew)
         elif(self.rewardNormalization == "rewards"):
-            rew = self.rewardRewards(rew, infos)
-
-        if origTer:
-            self.ret = 0
+            rew = self.rewardRewards(rew)
         
+        #print("Orig rew = {}, rew = {}".format(infos["origRew"], rew))
         return obs, rew, origTer, infos
     
     """
@@ -72,29 +76,29 @@ class EnvironmentWrapper(gym.core.Wrapper):
     1. update return
     2. divide reward by std(return) *without* subtracting and adding back mean
     """
-    def rewardReturns(self, rew, infos):
+    def rewardReturns(self, rew):
         
         self.ret = self.ret * self.gamma + rew
         self.rewRMS.update(np.array([self.ret]).copy())  
         
-        rew = rew / (self.rewRMS.var + 1e-8)
+        rew = rew / np.sqrt(self.rewRMS.var + 1e-8)
         
         if(self.clipRew > 0):
             rew = np.clip(rew,-self.clipRew,self.clipRew)[0]
 
         return rew
     
-    def rewardRewards(self, rew, infos):
+    def rewardRewards(self, rew):
         
         self.rewRMS.update(np.array([rew]))  
         if(self.centerRew):
             rew = rew - self.rewRMS.mean
         if(self.scaleRew):
             if(self.centerRew):
-                rew = rew/(self.rewRMS.var + 1e-8)
+                rew = rew/np.sqrt(self.rewRMS.var + 1e-8)
             else:
                 diff = rew - self.rewRMS.mean
-                diff = diff/(self.rewRMS.std + 1e-8)
+                diff = diff/np.sqrt(self.rewRMS.std + 1e-8)
                 rew = diff + self.rewRMS.mean            
         if(self.clipRew > 0):
             rew = np.clip(rew,-self.clipRew,self.clipRew)[0]
@@ -111,8 +115,9 @@ class EnvironmentWrapper(gym.core.Wrapper):
             
         if(self.normOb):
             self.obsRMS.update(obs)
-            obs = np.clip((obs - self.obsRMS.mean)/(self.obsRMS.var + 1e-8),-self.clipOb,self.clipOb)
-
+            obs = np.clip((obs - self.obsRMS.mean)/np.sqrt(self.obsRMS.var + 1e-8),-self.clipOb,self.clipOb)
+        
+        self.ret = 0
         return obs
 
              

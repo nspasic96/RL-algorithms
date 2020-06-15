@@ -203,3 +203,6 @@ def updateMeanVarCountFromMoments(currMean, currVar, currCount, batchMean, batch
     newCount = totCount
 
     return newMean, newVar, newCount
+
+def normalize(vec):
+    return (vec - vec.mean()) / (vec.std() + 1e-10)

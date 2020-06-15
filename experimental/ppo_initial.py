@@ -41,10 +41,6 @@ parser.add_argument('--hidden_layers_state_value', type=int, nargs='+', default=
                    help='hidden layers size in state value network')
 parser.add_argument('--hidden_layers_policy', type=int, nargs='+', default=[64,64],
                    help='hidden layers size in policy network')
-parser.add_argument('--policy_network_batch_size', type=int, default=64,
-                   help="batch size for policy network optimization")
-parser.add_argument('--value_function_batch_size', type=int, default=64,
-                   help="batch size for value network optimization")
 
 #WANDB parameters
 parser.add_argument('--wandb_projet_name', type=str, default="proximal-policy-optimization",
@@ -63,15 +59,26 @@ parser.add_argument('--run_statistics', type=lambda x: (str(x).lower() == 'true'
                    help='whether to run statistics, necessary if testing agent')
 
 #PPO specific parameters
-parser.add_argument('--state_value_network_updates', type=int, default=10,
-                   help="number of updates for state-value network")
-parser.add_argument('--policy_network_updates', type=int, default=10,
-                   help="number of updates for policy network")
+parser.add_argument('--update_epochs', type=int, default=10,
+                   help="number of updates")
+parser.add_argument('--minibatch_size', type=int, default=64,
+                   help="batch size for policy network optimization")
 parser.add_argument('--eps', type=float, default=0.2,
                    help='epsilon for clipping in objective')
 parser.add_argument('--norm_adv', type=lambda x: (str(x).lower() == 'true'), default=True,
-                   help="whether to normalize advantages in GAE buffer")
-
+                   help="whether to normalize batch of advantages obtained from GAE buffer for policy optimization")
+parser.add_argument('--layer_norm', type=lambda x: (str(x).lower() == 'true'), default=True,
+                   help="whether to normalize layers in policy network")
+#params for stoping criteria when updating params
+parser.add_argument('--kle_stop',  type=lambda x: (str(x).lower() == 'true'), default=True,
+                    help='whether to stop early updating in current epoch(for True) when KL changes too much')
+parser.add_argument('--kle_rollback',  type=lambda x: (str(x).lower() == 'true'), default=True,
+                    help='whether to rollback to parameters before last update')
+parser.add_argument('--bound_simpler',  type=lambda x: (str(x).lower() == 'true'), default=True,
+                    help='whether to calculate approximate KL on last mini batch(for True) or on all epoch samples')
+parser.add_argument('--target_kl', type=float, default=0.03,
+                    help='the target-kl variable that is referred by --kl')
+    
 #parameters related to PPO-M
 parser.add_argument('--minimal', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to omit code optimizations 1-4')
@@ -81,7 +88,7 @@ parser.add_argument('--minimal_initialization', type=lambda x: (str(x).lower() =
                    help='whether to initialize weights with orthogonal initializer')
 parser.add_argument('--minimal_eps', type=float, default=0.2,
                    help='epsilon for clipping value function, negative value to turn it off')
-parser.add_argument('--minimal_grad_clip', type=float, default=1. ,
+parser.add_argument('--minimal_grad_clip', type=float, default=0.5,
                    help='gradient l2 norm, negative value to turn it off')
 
 args = parser.parse_args()
@@ -140,22 +147,16 @@ with tf.Session(graph=graph) as sess:
         cnf['exp_name_tb'] = experimentName
         wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, tensorboard=True)   
     
-    #statistics to run
-    if args.run_statistics:
-        statSizeRew = args.test_episodes
-
-        statistics = {}
-        statistics["test_reward"] = Statistics(statSizeRew, 1, "test_reward")
-   
     #definition of placeholders
     logProbSampPh = tf.placeholder(dtype = tf.float32, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
     advPh = tf.placeholder(dtype = tf.float32, shape=[None], name="advantages") #advantages obtained using GAE-lambda and values obtainet from StateValueNetwork V
     VPrevPh = tf.placeholder(dtype = dtype, shape=[None], name="previousValues") #values for previous iteration returned by StateValueNetwork V
-    totalDiscountedRewardPh = tf.placeholder(dtype = dtype, shape=[None], name="totalDiscountedReward") #total discounted cumulative reward
+    totalEstimatedDiscountedRewardPh = tf.placeholder(dtype = dtype, shape=[None], name="totalEstimatedDiscountedReward") #total discounted cumulative reward estimated as advantage + previous values
+    policyParamsFlatten= tf.placeholder(dtype = dtype, shape=[None], name = "policyParams") #policy params flatten, used in assingment of pi params if KL rollback is enabled
     obsPh = tf.placeholder(dtype=tf.float32, shape=[None, inputLength], name="observations") #observations
     learningRateVfPh = tf.placeholder(dtype=dtype, shape=None, name="learningRateVfPh")#learning rate placeholder
     learningRatePolPh = tf.placeholder(dtype=dtype, shape=None, name="learningRatePolPh")#learning rate placeholder
-    
+        
     if discreteActionsSpace:
         aPh = tf.placeholder(dtype=tf.int32, shape=[None], name="actions") #actions taken
         logProbsAllPh = tf.placeholder(dtype= tf.float32, shape=[None, outputLength], name="logProbsAll") #log probabilities of all actions according to sampling distribution (pi_old)
@@ -166,32 +167,43 @@ with tf.Session(graph=graph) as sess:
         oldActionLogStdPh = tf.placeholder(dtype=tf.float32, shape=[None,outputLength], name="actionsLogStdOld") 
         additionalInfoLengths = [outputLength, outputLength]
     
-    buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, args.norm_adv, additionalInfoLengths)
+    buffer = GAEBuffer(args.gamma, args.lambd, args.epoch_len, inputLength, 1 if discreteActionsSpace else outputLength, False, additionalInfoLengths)
 
     #definition of networks
     orthogonalInitializtionV=[2**0.5]*len(args.hidden_layers_state_value) + [1] if (not args.minimal) else False
     orthogonalInitializtionP=[2**0.5]*len(args.hidden_layers_policy) + [0.01] if (not args.minimal) else False
     V = StateValueNetwork(sess, inputLength, args.hidden_layers_state_value, args.learning_rate_state_value, obsPh) #this network has method for training, but it is never used. Instead, training is done outside of this class
     if(discreteActionsSpace):
-        policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig", orthogonalInitializtion=orthogonalInitializtionP) #policy network for discrete action space
+        policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig", orthogonalInitializtion=orthogonalInitializtionP, layerNorm=args.layer_norm) #policy network for discrete action space
     else:  
-        policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [None]
-        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=np.zeros((1, outputLength), dtype=np.float32), orthogonalInitializtion=orthogonalInitializtionP)
-        
+        policyActivations = [tf.nn.tanh for i in range(len(args.hidden_layers_policy))] + [None]
+        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=np.zeros((1, outputLength), dtype=np.float32), orthogonalInitializtion=orthogonalInitializtionP, layerNorm=args.layer_norm)
+    
+    #statistics to run
+    if args.run_statistics:
+        statSizeRew = args.test_episodes
+
+        statistics = {}
+        statistics["test_reward"] = Statistics(statSizeRew, 1, "test_reward")
+    approxKl = tf.reduce_mean(logProbSampPh - policy.logProbWithCurrParams)
+      
     #definition of losses to optimize
     ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
     clippedRatio = tf.clip_by_value(ratio, 1-args.eps, 1+args.eps)
     Lloss = -tf.reduce_mean(tf.minimum(ratio*advPh,clippedRatio*advPh)) # - sign because we want to maximize our objective
     
     if not args.minimal and args.minimal_eps >= 0:
-        targetOutput = tf.clip_by_value(V.output, VPrevPh-args.minimal_eps, VPrevPh+args.minimal_eps)      
+        vLossUncliped = (V.output - totalEstimatedDiscountedRewardPh)**2
+        vClipped = VPrevPh + tf.clip_by_value(V.output - VPrevPh, -args.minimal_eps, args.minimal_eps)
+        vLossClipped = (vClipped - totalEstimatedDiscountedRewardPh)**2
+        vLossMax = tf.maximum(vLossClipped, vLossUncliped)
+        stateValueLoss = tf.reduce_mean(0.5 * vLossMax)
     else:
-        targetOutput = V.output
-    stateValueLoss = tf.reduce_mean((targetOutput - totalDiscountedRewardPh)**2)
-    
+        stateValueLoss = tf.reduce_mean((V.output - totalEstimatedDiscountedRewardPh)**2)
+       
     if not args.minimal and args.minimal_grad_clip >= 0:
-        optimizerVf = tf.train.AdamOptimizer(learning_rate = learningRateVfPh) 
-        optimizerPol = tf.train.AdamOptimizer(learning_rate = learningRatePolPh)    
+        optimizerVf = tf.train.AdamOptimizer(learning_rate = learningRateVfPh, epsilon=1e-05) 
+        optimizerPol = tf.train.AdamOptimizer(learning_rate = learningRatePolPh, epsilon=1e-05)    
         valGradients, valVaribales = zip(*optimizerVf.compute_gradients(stateValueLoss)) 
         polGradients, polVaribales = zip(*optimizerPol.compute_gradients(Lloss))  
         valGradients, _ = tf.clip_by_global_norm(valGradients, args.minimal_grad_clip)  
@@ -199,8 +211,15 @@ with tf.Session(graph=graph) as sess:
         svfOptimizationStep = optimizerVf.apply_gradients(zip(valGradients, valVaribales))     
         policyOptimizationStep = optimizerPol.apply_gradients(zip(polGradients, polVaribales))
     else:        
-        svfOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_state_value).minimize(stateValueLoss)
-        policyOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_policy).minimize(Lloss)
+        svfOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_state_value, epsilon=1e-05).minimize(stateValueLoss)
+        policyOptimizationStep = tf.train.AdamOptimizer(learning_rate = args.learning_rate_policy, epsilon=1e-05).minimize(Lloss)
+       
+    suffix = "ContinuousOrig"
+    if discreteActionsSpace:
+        suffix = "DiscreteOrig"
+    policyParams = utils.get_vars("PolicyNetwork"+ suffix)
+    getPolicyParams = utils.flat_concat(policyParams)
+    setPolicyParams = utils.assign_params_from_flat(policyParamsFlatten, policyParams)
     
     #tf session initialization
     init = tf.initialize_local_variables()
@@ -235,14 +254,15 @@ with tf.Session(graph=graph) as sess:
             buffer.add(obs, sampledAction[0], predictedV[0][0], logProbSampledAction, reward, additionalInfos)
             obs = nextObs.copy()
     
-            done = terminal or epLen == args.max_episode_len
+            done = (terminal or epLen == args.max_episode_len)
             if(done or l == args.epoch_len -1):
                 val = 0 if terminal else V.forward(np.expand_dims(obs, 0))
                 buffer.finishPath(val)
                 if terminal and args.wandb_log:                    
                     summaryRet, summaryLen = sess.run([epTotalRewSum, epLenSum], feed_dict = {epTotalRewPh:epTotalRet, epLenPh:epLen})
-                    writer.add_summary(summaryRet, finishedEp)
-                    writer.add_summary(summaryLen, finishedEp)                    
+                    globalStep = e*args.epoch_len + l
+                    writer.add_summary(summaryRet, globalStep)
+                    writer.add_summary(summaryLen, globalStep)                    
                     finishedEp += 1
                 obs, epLen, epTotalRet = env.reset().copy(), 0, 0
               
@@ -257,39 +277,64 @@ with tf.Session(graph=graph) as sess:
         learningRateVf = utils.annealedNoise(args.learning_rate_state_value, 0, args.epochs, e)
         learningRatePol = utils.annealedNoise(args.learning_rate_policy, 0, args.epochs, e)
     
-        #policy update
-        policyUpdateStart = time.time()      
+        #update
+        updateStart = time.time()      
         total = args.epoch_len
-        for j in range(args.policy_network_updates):
+        for j in range(args.update_epochs):
             perm = np.random.permutation(total)
-            if(total > args.policy_network_batch_size):
-                start = 0
-                while(start < total):    
-                    end = np.amin([start+args.policy_network_batch_size, total])
-                    sess.run(policyOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalDiscountedRewardPh : returns[perm[start:end]], aPh: actions[perm[start:end]], advPh : advEst[perm[start:end]], logProbSampPh : sampledLogProb[perm[start:end]], learningRatePolPh:learningRatePol})
-                    start = end
-            else:
-                sess.run(policyOptimizationStep, feed_dict={obsPh : observations[perm], totalDiscountedRewardPh : returns[perm], aPh: actions[perm[start:end]], learningRatePolPh:learningRatePol})    
-        policyUpdateEnd = time.time()      
+            start = 0
+            approxKlCumBeforeVfUpdate = 0
+            approxKlCumAfterVfUpdate = 0            
+            oldParams = sess.run(getPolicyParams)
+            
+            while(start < total):    
+                end = np.amin([start+args.minibatch_size, total])
+                sess.run(policyOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalEstimatedDiscountedRewardPh : returns[perm[start:end]], aPh: actions[perm[start:end]], advPh : utils.normalize(advEst[perm[start:end]]) if args.norm_adv else advEst[perm[start:end]], logProbSampPh : sampledLogProb[perm[start:end]], learningRatePolPh:learningRatePol})
+                
+                # KEY TECHNIQUE: This will stop updating the policy once the KL has been breached
+                avgBatchBeforeVfUpdate = sess.run(approxKl, feed_dict = {logProbSampPh : sampledLogProb[perm[start:end]], obsPh : observations[perm[start:end]], aPh: actions[perm[start:end]]})
+                approxKlCumBeforeVfUpdate += (end-start) * avgBatchBeforeVfUpdate
+                
+                sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalEstimatedDiscountedRewardPh : returns[perm[start:end]], VPrevPh:Vprevs[perm[start:end]] , learningRateVfPh:learningRateVf})
+
+                avgBatchAfterVfUpdate = sess.run(approxKl, feed_dict = {logProbSampPh : sampledLogProb[perm[start:end]], obsPh : observations[perm[start:end]], aPh: actions[perm[start:end]]})
+                approxKlCumAfterVfUpdate += (end-start) * avgBatchAfterVfUpdate
+
+                start = end
+                
+            approxKlCumBeforeVfUpdate /= total
+            approxKlCumAfterVfUpdate /= total
+            
+            #KL stop update and rollback logic
+            if args.kle_stop:
+                if args.bound_simpler:
+                    if avgBatchBeforeVfUpdate > args.target_kl:
+                        print("\tAprroximate kl for update number {} for last minibatch in epoch {} is {} which is greather than {}. Skipping further updates in this epoch".format(j, e, avgBatchBeforeVfUpdate,args.target_kl))
+                        break
+                else:
+                    if approxKlCumBeforeVfUpdate > args.target_kl:
+                        print("\tAprroximate kl for update number {} in epoch {} is {} which is greather than {}. Skipping further updates in this epoch".format(j, e, approxKlCumBeforeVfUpdate,args.target_kl))
+                        break
+                    
+            if args.kle_rollback:                
+                if args.bound_simpler:
+                    if avgBatchAfterVfUpdate > args.target_kl:
+                        print("\tRollback to previous policy because kl for update number {} for last minibatch in epoch {} is {} which is greather than {}. Skipping further updates in this epoch".format(j, e, avgBatchAfterVfUpdate,args.target_kl))
+                        
+                        sess.run(setPolicyParams, feed_dict = {policyParamsFlatten: oldParams})                        
+                        break
+                else:
+                    if approxKlCumAfterVfUpdate > args.target_kl:
+                        print("\tRollback to previous policy because kl for update number {} in epoch {} is {} which is greather than {}. Skipping further updates in this epoch".format(j, e, approxKlCumAfterVfUpdate,args.target_kl))
+                        
+                        sess.run(setPolicyParams, feed_dict = {policyParamsFlatten: oldParams})    
+                        break
+                    
+            
+        updateEnd = time.time()      
         
-        print("\tPolicy in epoch {} updated in {}".format(e, policyUpdateEnd-policyUpdateStart))    
-        
-        #state-value function update
-        svfUpdateStart = time.time()   
-        for j in range(args.state_value_network_updates):
-            perm = np.random.permutation(total)
-            if(total > args.value_function_batch_size):
-                start = 0
-                while(start < total):    
-                    end = np.amin([start+args.value_function_batch_size, total])
-                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalDiscountedRewardPh : returns[perm[start:end]], VPrevPh:Vprevs[perm[start:end]] , learningRateVfPh:learningRateVf})
-                    start = end
-            else:
-                sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm], totalDiscountedRewardPh : returns[perm], learningRateVfPh:learningRateVf}) 
-        svfUpdateEnd = time.time()      
-        
-        print("\tState value in epoch {} updated in {}".format(e, svfUpdateEnd-svfUpdateStart))             
-    
+        print("\tUpdate in epoch {} updated in {}".format(e, updateEnd-updateStart))    
+         
         LlossOld = sess.run(Lloss , feed_dict={obsPh : observations, aPh: actions, advPh : advEst, logProbSampPh : sampledLogProb})#, logProbsAllPh : allLogProbs})#L function inputs: observations, advantages estimated, logProb of sampled action, logProbsOfAllActions
         
         svLossStart = time.time()
@@ -301,20 +346,20 @@ with tf.Session(graph=graph) as sess:
             SVLossSum = 0
             while(start < total):    
                 end = np.amin([start+maxBatchSize, total])
-                avgBatch = sess.run(stateValueLoss, feed_dict={obsPh : observations[start:end], totalDiscountedRewardPh : returns[start:end], VPrevPh:Vprevs[perm[start:end]]})
+                avgBatch = sess.run(stateValueLoss, feed_dict={obsPh : observations[start:end], totalEstimatedDiscountedRewardPh : returns[start:end], VPrevPh:Vprevs[perm[start:end]]})
                 SVLossSum += avgBatch*(end-start)
                 start = end
             SVLoss = SVLossSum/observations.shape[0]
         else:
-            SVLoss = sess.run(stateValueLoss, feed_dict={obsPh : observations, totalDiscountedRewardPh : returns, VPrevPh:Vprevs})     
+            SVLoss = sess.run(stateValueLoss, feed_dict={obsPh : observations, totalEstimatedDiscountedRewardPh : returns, VPrevPh:Vprevs})     
         svLossEnd = time.time()      
         
         print("\tState value loss in epoch {} calculated in {}".format(e, svLossEnd-svLossStart))
         
         if args.wandb_log:
             summarySVm, summaryLloss = sess.run([SVLossSummary, LlossNewSum], feed_dict = {SVLossPh:SVLoss, LlossNewPh:LlossOld})
-            writer.add_summary(summarySVm, e)
-            writer.add_summary(summaryLloss, e)
+            writer.add_summary(summarySVm, (e+1)*args.epoch_len)
+            writer.add_summary(summaryLloss, (e+1)*args.epoch_len)
         
         epochEnd = time.time()
         print("Epoch {} ended in {}".format(e, epochEnd-epochSt))
@@ -329,8 +374,8 @@ with tf.Session(graph=graph) as sess:
                     if args.render:
                         env.render()
                     _, _, sampledActionTest, _ = policy.getSampledActions(np.expand_dims(osbTest, 0))  
-                    nextOsbTest, reward, terminalTest, _ = env.step(sampledActionTest[0])
-                    testRet += infos["origRew"]
+                    nextOsbTest, _, terminalTest, infosTest = env.step(sampledActionTest[0])
+                    testRet += infosTest["origRew"]
                     osbTest = nextOsbTest
                     if terminalTest:
                         break  

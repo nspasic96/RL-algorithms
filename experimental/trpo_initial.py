@@ -67,7 +67,7 @@ parser.add_argument('--delta', type=float, default=0.01,
                    help='max KL distance between two successive distributions at the start of anneailng')
 parser.add_argument('--delta_final', type=float, default=0.01,
                    help='max KL distance between two successive distributions at the end of annealing')
-parser.add_argument('--state_value_network_updates', type=int, default=80,
+parser.add_argument('--state_value_network_updates', type=int, default=10,
                    help="number of updates for state-value network")
 parser.add_argument('--damping_coef', type=float, default=0.1,
                    help='damping coef')
@@ -78,7 +78,7 @@ parser.add_argument('--max_iters_line_search', type=int, default=10,
 parser.add_argument('--alpha', type=float, default=0.8,
                    help="defult step size in line serach")
 parser.add_argument('--norm_adv', type=lambda x: (str(x).lower() == 'true'), default=True,
-                   help="whether to normalize advantages in GAE buffer")
+                   help="whether to normalize batch of advantages obtained from GAE buffer for policy optimization")
 
 #parameters related to TRPO+
 parser.add_argument('--plus', type=lambda x: (str(x).lower() == 'true'), default=False,
@@ -159,8 +159,8 @@ with tf.Session(graph=graph) as sess:
     #definition of placeholders
     logProbSampPh = tf.placeholder(dtype = dtype, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
     advPh = tf.placeholder(dtype = dtype, shape=[None], name="advantages") #advantages obtained using GAE-lambda and values obtainet from StateValueNetwork V
-    VPrev = tf.placeholder(dtype = dtype, shape=[None], name="previousValues") #values for previous iteration returned by StateValueNetwork V
-    totalDiscountedRewardPh = tf.placeholder(dtype = dtype, shape=[None], name="totalDiscountedReward") #total discounted cumulative reward
+    VPrevPh = tf.placeholder(dtype = dtype, shape=[None], name="previousValues") #values for previous iteration returned by StateValueNetwork V
+    totalEstimatedDiscountedRewardPh = tf.placeholder(dtype = dtype, shape=[None], name="totalDiscountedReward") #total discounted cumulative reward
     policyParamsFlatten= tf.placeholder(dtype = dtype, shape=[None], name = "policyParams") #policy params flatten, used in assingment of pi params in line search algorithm
     obsPh = tf.placeholder(dtype=dtype, shape=[None, inputLength], name="observations") #observations 
     learningRatePh = tf.placeholder(dtype=dtype, shape=None, name="learningRatePh")#learning rate placeholder, used when TRPO+ is enabled
@@ -184,19 +184,22 @@ with tf.Session(graph=graph) as sess:
     if(discreteActionsSpace):
         policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig", orthogonalInitializtion=orthogonalInitializtionP) #policy network for discrete action space
     else:          
-        policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [None]    
-        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=logStdInit=np.zeros((1, outputLength), dtype=np.float32), logStdTrainable=True, orthogonalInitializtion=orthogonalInitializtionP)
+        policyActivations = [tf.nn.tanh for i in range(len(args.hidden_layers_policy))] + [None]    
+        policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=-0.5*np.ones((1, outputLength), dtype=np.float32), logStdTrainable=True, orthogonalInitializtion=orthogonalInitializtionP)
       
     #definition of losses to optimize
     ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
     Lloss = -tf.reduce_mean(ratio*advPh) # - sign because we want to maximize our objective
     
-    if args.plus and args.plus_eps >= 0:
-        targetOutput = tf.clip_by_value(V.output, VPrev-args.plus_eps, VPrev+args.plus_eps)      
+    if  args.plus and args.plus_eps >= 0:
+        vLossUncliped = (V.output - totalEstimatedDiscountedRewardPh)**2
+        vClipped = VPrevPh + tf.clip_by_value(V.output - VPrevPh, -args.plus_eps, args.plus_eps)
+        vLossClipped = (vClipped - totalEstimatedDiscountedRewardPh)**2
+        vLossMax = tf.maximum(vLossClipped, vLossUncliped)
+        stateValueLoss = tf.reduce_mean(0.5 * vLossMax)
     else:
-        targetOutput = V.output
-    stateValueLoss = tf.reduce_mean((targetOutput - totalDiscountedRewardPh)**2)
-    
+        stateValueLoss = tf.reduce_mean((V.output - totalEstimatedDiscountedRewardPh)**2)
+        
     if(discreteActionsSpace):
         KLcontraint = utils.categorical_kl(policy.logProbs, logProbsAllPh) 
     else:
@@ -325,13 +328,12 @@ with tf.Session(graph=graph) as sess:
             while(start < total):    
                 end = np.amin([start+args.value_function_batch_size, total])
                 if args.plus:
-                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalDiscountedRewardPh : returns[perm[start:end]], VPrev : Vprevs[perm[start:end]], learningRatePh: utils.annealedNoise(args.learning_rate_state_value,0,args.epochs,e)})
+                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalEstimatedDiscountedRewardPh : returns[perm[start:end]], VPrevPh : Vprevs[perm[start:end]], learningRatePh: utils.annealedNoise(args.learning_rate_state_value,0,args.epochs,e)})
                 else:
-                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalDiscountedRewardPh : returns[perm[start:end]], VPrev : Vprevs[perm[start:end]]})
+                    sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalEstimatedDiscountedRewardPh : returns[perm[start:end]], VPrevPh : Vprevs[perm[start:end]]})
                     
                 start = end
-           
-         
+        
         svfUpdateEnd = time.time()     
         
         print("\tState value in epoch {} updated in {}".format(e, svfUpdateEnd-svfUpdateStart))    
@@ -344,12 +346,12 @@ with tf.Session(graph=graph) as sess:
             SVLossSum = 0
             while(start < total):    
                 end = np.amin([start+2*svfTrainInBatchesThreshold, total])
-                avgBatch = sess.run(stateValueLoss, feed_dict={obsPh : observations[start:end], totalDiscountedRewardPh : returns[start:end], VPrev : Vprevs[start:end]})
+                avgBatch = sess.run(stateValueLoss, feed_dict={obsPh : observations[start:end], totalEstimatedDiscountedRewardPh : returns[start:end], VPrevPh : Vprevs[start:end]})
                 SVLossSum += avgBatch*(end-start)
                 start = end
             SVLoss = SVLossSum/observations.shape[0]
         else:
-            SVLoss = sess.run(stateValueLoss, feed_dict={obsPh : observations, totalDiscountedRewardPh : returns, VPrev : Vprevs})            
+            SVLoss = sess.run(stateValueLoss, feed_dict={obsPh : observations, totalEstimatedDiscountedRewardPh : returns, VPrevPh : Vprevs})            
            
         svLossEnd = time.time()      
         
@@ -373,8 +375,8 @@ with tf.Session(graph=graph) as sess:
                     if args.render:
                         env.render()
                     _, _, sampledActionTest, _ = policy.getSampledActions(np.expand_dims(osbTest, 0))  
-                    nextOsbTest, reward, terminalTest, _ = env.step(sampledActionTest[0])
-                    testRet += infos["origRew"]
+                    nextOsbTest, _, terminalTest, infosTest = env.step(sampledActionTest[0])
+                    testRet += infosTest["origRew"]
                     osbTest = nextOsbTest
                     if terminalTest:
                         break  

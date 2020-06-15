@@ -59,6 +59,7 @@ class GAEBuffer:
         deltas = pathRews[:-1] + self.gamma*pathPredVals[1:] - pathPredVals[:-1]        
         self.advantagesBuff[path_slice] = utils.disount_cumsum(deltas, self.gamma * self.lamb) 
         self.returnsBuff[path_slice] = self.advantagesBuff[path_slice]+self.predValsBuff[path_slice]
+        
         # Advantage normalization
         if self.advantageNorm:
             self.advantagesBuff[path_slice] = (self.advantagesBuff[path_slice] - self.advantagesBuff[path_slice].mean()) / (self.advantagesBuff[path_slice].std() + 1e-10)
