@@ -105,7 +105,7 @@ with tf.Session(graph=graph) as sess:
     
     env = gym.make(args.gym_id) 
     if args.plus and args.plus_returns:
-        env = EnvironmentWrapper(env.env, normOb=False, rewardNormalization="returns", clipOb=10., clipRew=10., episodicMeanVarObs=False, episodicMeanVarRew=False, gamma=args.gamma)         
+        env = EnvironmentWrapper(env.env, normOb=True, rewardNormalization="returns", clipOb=10., clipRew=10., episodicMeanVarObs=False, episodicMeanVarRew=False, gamma=args.gamma)         
     else:
         env = EnvironmentWrapper(env.env, normOb=False, rewardNormalization=None, clipOb=1000000., clipRew=1000000)    
         

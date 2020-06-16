@@ -60,7 +60,7 @@ class EnvironmentWrapper(gym.core.Wrapper):
         infos["origRew"] = origRew
                 
         if(self.normOb):
-            self.obsRMS.update(origObs)
+            self.obsRMS.update(np.array([origObs]).copy())
             obs = np.clip((origObs - self.obsRMS.mean)/np.sqrt(self.obsRMS.var + 1e-8),-self.clipOb,self.clipOb)
 
         if(self.rewardNormalization == "returns"):
@@ -114,7 +114,7 @@ class EnvironmentWrapper(gym.core.Wrapper):
             self.rewRMS = RunningMeanStd(shape=(1,))
             
         if(self.normOb):
-            self.obsRMS.update(obs)
+            self.obsRMS.update(np.array([obs]).copy())
             obs = np.clip((obs - self.obsRMS.mean)/np.sqrt(self.obsRMS.var + 1e-8),-self.clipOb,self.clipOb)
         
         self.ret = 0
