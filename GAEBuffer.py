@@ -11,14 +11,14 @@ class GAEBuffer:
 
         self.obsBuff = np.zeros((size, obsLen))
         self.actBuff = np.zeros((size, actLen))
-        self.predValsBuff = np.zeros(size)
-        self.samLogProbBuff = np.zeros(size)
-        self.rewardsBuff = np.zeros(size)
-        self.advantagesBuff = np.zeros(size)
-        self.returnsBuff = np.zeros(size)
+        self.predValsBuff = np.zeros((size,))
+        self.samLogProbBuff = np.zeros((size,))
+        self.rewardsBuff = np.zeros((size,))
+        self.advantagesBuff = np.zeros((size,))
+        self.returnsBuff = np.zeros((size,))
         self.advantageNorm=advantageNorm
         
-        self.additionalInfos = [np.zeros((size, l)) for l in additionalInfoLengths]
+        self.additionalInfos = [np.zeros((size, l)) if l > 1 else np.zeros((size,)) for l in additionalInfoLengths]
                    
 
 
@@ -57,7 +57,7 @@ class GAEBuffer:
         pathPredVals = np.append(self.predValsBuff[path_slice], val)
 
         deltas = pathRews[:-1] + self.gamma*pathPredVals[1:] - pathPredVals[:-1]        
-        self.advantagesBuff[path_slice] = utils.disount_cumsum(deltas, self.gamma * self.lamb) 
+        self.advantagesBuff[path_slice] = utils.disount_cumsum(deltas, self.gamma * self.lamb)
         self.returnsBuff[path_slice] = self.advantagesBuff[path_slice]+self.predValsBuff[path_slice]
         
         # Advantage normalization

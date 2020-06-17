@@ -102,7 +102,7 @@ with tf.Session(graph=graph) as sess:
     
     env = gym.make(args.gym_id)
     if not args.minimal:
-        env = EnvironmentWrapper(env.env, normOb=True, rewardNormalization="returns", clipOb=10., clipRew=5., episodicMeanVarObs=False, episodicMeanVarRew=False, gamma=args.gamma)         
+        env = EnvironmentWrapper(env.env, normOb=True, rewardNormalization="returns", clipOb=10., clipRew=10., episodicMeanVarObs=False, episodicMeanVarRew=False, gamma=args.gamma)         
     else:
         env = EnvironmentWrapper(env.env, normOb=False, rewardNormalization=None, clipOb=1000000., clipRew=1000000)    
         
@@ -152,7 +152,7 @@ with tf.Session(graph=graph) as sess:
     totalEstimatedDiscountedRewardPh = tf.placeholder(dtype = dtype, shape=[None], name="totalEstimatedDiscountedReward") #total discounted cumulative reward estimated as advantage + previous values
     trainableParamsFlatten = tf.placeholder(dtype = dtype, shape=[None], name = "trainableParams") #policy params flatten, used in assingment of pi params if KL rollback is enabled
     obsPh = tf.placeholder(dtype=tf.float32, shape=[None, inputLength], name="observations") #observations
-    learningRatePh = tf.placeholder(dtype=dtype, shape=None, name="learningRatePh")#learning rate placeholder
+    learningRatePh = tf.placeholder(dtype=dtype, shape=[], name="learningRatePh")#learning rate placeholder
         
     if discreteActionsSpace:
         aPh = tf.placeholder(dtype=tf.int32, shape=[None], name="actions") #actions taken
@@ -172,10 +172,9 @@ with tf.Session(graph=graph) as sess:
         curNode = tf.layers.Dense(args.hidden_layers[0], tf.nn.tanh, kernel_initializer=tf.orthogonal_initializer(2**0.5), name="fc1")(obsPh)
         for i,l in enumerate(args.hidden_layers[1:]):
             curNode = tf.layers.Dense(l, tf.nn.tanh, kernel_initializer=tf.orthogonal_initializer(2**0.5), name="fc{}".format(i+2))(curNode)
-            curNode = tf.contrib.layers.layer_norm(curNode)
-         
+                        
         #value operation
-        vfOutputOp = tf.layers.Dense(1, kernel_initializer=tf.orthogonal_initializer(1), name="outputV")(curNode)
+        vfOutputOp = tf.squeeze(tf.layers.Dense(1, kernel_initializer=tf.orthogonal_initializer(1), name="outputV")(curNode),1)
         
         #policy operations
         actionMeanOp = tf.layers.Dense(outputLength, kernel_initializer=tf.orthogonal_initializer(0.01), name="outputA")(curNode)
@@ -252,12 +251,12 @@ with tf.Session(graph=graph) as sess:
             nextObs, reward, terminal, infos = env.step(sampledAction[0])  
             epLen += 1
             epTotalRet += infos["origRew"]    
-            buffer.add(obs, sampledAction[0], predictedV[0][0], logProbSampledAction, reward, additionalInfos)
+            buffer.add(obs, sampledAction[0], predictedV[0], logProbSampledAction, reward, additionalInfos)
             obs = nextObs.copy()
     
             done = (terminal or epLen == args.max_episode_len)
             if(done or l == args.epoch_len -1):
-                val = 0 if terminal else sess.run(vfOutputOp, feed_dict = {obsPh : np.expand_dims(obs, 0)})
+                val = 0 if terminal else sess.run(vfOutputOp, feed_dict = {obsPh : np.expand_dims(obs, 0)})[0]
                 buffer.finishPath(val)
                 if terminal and args.wandb_log:                    
                     summaryRet, summaryLen = sess.run([epTotalRewSum, epLenSum], feed_dict = {epTotalRewPh:epTotalRet, epLenPh:epLen})
@@ -276,7 +275,6 @@ with tf.Session(graph=graph) as sess:
  
         #if minimal is set to false, this will be not used, even though it will be passed in feed_dict for optimization step (see how opt. step is defined)
         learningRate = utils.annealedNoise(args.learning_rate, 0, args.epochs, e)
-        print(learningRate)
     
         #update
         updateStart = time.time()      

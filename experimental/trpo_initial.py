@@ -77,9 +77,6 @@ parser.add_argument('--max_iters_line_search', type=int, default=10,
                    help="maximum steps to take in line serach")
 parser.add_argument('--alpha', type=float, default=0.8,
                    help="defult step size in line serach")
-parser.add_argument('--norm_adv', type=lambda x: (str(x).lower() == 'true'), default=True,
-                   help="whether to normalize batch of advantages obtained from GAE buffer for policy optimization")
-
 #parameters related to TRPO+
 parser.add_argument('--plus', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to add code optimizations 1-4')
@@ -91,6 +88,9 @@ parser.add_argument('--plus_eps', type=float, default=0.2,
                    help='epsilon for clipping value function, negative value to turn it off')
 parser.add_argument('--plus_grad_clip', type=float, default=1. ,
                    help='gradient l2 norm, negative value to turn it off')
+parser.add_argument('--norm_adv', type=lambda x: (str(x).lower() == 'true'), default=False,
+                   help="whether to normalize batch of advantages obtained from GAE buffer for policy optimization")
+
 
 args = parser.parse_args()
 
@@ -163,7 +163,7 @@ with tf.Session(graph=graph) as sess:
     totalEstimatedDiscountedRewardPh = tf.placeholder(dtype = dtype, shape=[None], name="totalDiscountedReward") #total discounted cumulative reward
     policyParamsFlatten= tf.placeholder(dtype = dtype, shape=[None], name = "policyParams") #policy params flatten, used in assingment of pi params in line search algorithm
     obsPh = tf.placeholder(dtype=dtype, shape=[None, inputLength], name="observations") #observations 
-    learningRatePh = tf.placeholder(dtype=dtype, shape=None, name="learningRatePh")#learning rate placeholder, used when TRPO+ is enabled
+    learningRatePh = tf.placeholder(dtype=dtype, shape=[], name="learningRatePh")#learning rate placeholder, used when TRPO+ is enabled
     
     if discreteActionsSpace:
         aPh = tf.placeholder(dtype=tf.int32, shape=[None,1], name="actions") #actions taken
@@ -253,14 +253,14 @@ with tf.Session(graph=graph) as sess:
             nextObs, reward, terminal, infos = env.step(sampledAction[0])  
             epLen += 1
             epTotalRew += infos["origRew"]
-            buffer.add(obs, sampledAction[0], predictedV[0][0], logProbSampledAction, reward, additionalInfos)
+            buffer.add(obs, sampledAction[0], predictedV[0], logProbSampledAction, reward, additionalInfos)
             obs = nextObs.copy()
     
             done = terminal or epLen == args.max_episode_len
             if(done or l == args.epoch_len -1):
                 #if(not terminal):
                     #print("Cutting path. Either max episode length steps are done in current episode or epoch has finished")
-                val = 0 if terminal else V.forward(np.expand_dims(obs, 0))
+                val = 0 if terminal else V.forward(np.expand_dims(obs, 0))[0]
                 buffer.finishPath(val)
                 if terminal and args.wandb_log:
                     summaryRet, summaryLen = sess.run([epTotalRewSum, epLenSum], feed_dict = {epTotalRewPh:epTotalRew, epLenPh:epLen})

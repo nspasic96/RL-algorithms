@@ -30,6 +30,7 @@ class StateValueNetwork:
                     curNode = tf.layers.Dense(l, tf.nn.tanh, kernel_initializer=tf.orthogonal_initializer(self.orthogonalInitializtion[i+1]), name="fc{}".format(i+2))(curNode)
                 self.output = tf.layers.Dense(1, kernel_initializer=tf.orthogonal_initializer(self.orthogonalInitializtion[-1]), name="output")(curNode)
                             
+            self.output = tf.squeeze(self.output, 1)
     def forward(self, observations):        
         assert (len(observations.shape) == 2 and observations.shape[1] == self.inputLength)
         
@@ -158,17 +159,17 @@ class PolicyNetworkContinuous:
             
             if not self.orthogonalInitializtion:
                 curNode = tf.layers.Dense(self.hiddenLayers[0], self.hiddenLayerActivations[0], kernel_initializer = tf.contrib.layers.xavier_initializer(),  name="fc1")(self.input)
-                curNode = tf.contrib.layers.layer_norm(curNode)
+                #curNode = tf.contrib.layers.layer_norm(curNode)
                 for i,l in enumerate(self.hiddenLayers[1:]):
                     curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i+1], kernel_initializer = tf.contrib.layers.xavier_initializer(), name="fc{}".format(i+2))(curNode)
-                    curNode = tf.contrib.layers.layer_norm(curNode)
+                    #curNode = tf.contrib.layers.layer_norm(curNode)
                 self.actionMean = tf.layers.Dense(self.outputLength, self.hiddenLayerActivations[-1],kernel_initializer = tf.contrib.layers.xavier_initializer(), name="ActionsMean")(curNode)
             else:
                 curNode = tf.layers.Dense(self.hiddenLayers[0], self.hiddenLayerActivations[0],kernel_initializer=tf.orthogonal_initializer(self.orthogonalInitializtion[0]), name="fc1")(self.input)
-                curNode = tf.contrib.layers.layer_norm(curNode)
+                #curNode = tf.contrib.layers.layer_norm(curNode)
                 for i,l in enumerate(self.hiddenLayers[1:]):
                     curNode = tf.layers.Dense(l, self.hiddenLayerActivations[i+1], kernel_initializer=tf.orthogonal_initializer(self.orthogonalInitializtion[i+1]), name="fc{}".format(i+2))(curNode)
-                    curNode = tf.contrib.layers.layer_norm(curNode)
+                    #curNode = tf.contrib.layers.layer_norm(curNode)
                 self.actionMean = tf.layers.Dense(self.outputLength, self.hiddenLayerActivations[-1], kernel_initializer=tf.orthogonal_initializer(self.orthogonalInitializtion[-1]), name="ActionsMean")(curNode)
             
             if(self.actionMeanScale is not None):
