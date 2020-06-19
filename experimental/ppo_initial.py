@@ -148,10 +148,10 @@ with tf.Session(graph=graph) as sess:
         wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, tensorboard=True)   
     
     #definition of placeholders
-    logProbSampPh = tf.placeholder(dtype = tf.float32, shape=[None,1], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
-    advPh = tf.placeholder(dtype = tf.float32, shape=[None,1], name="advantages") #advantages obtained using GAE-lambda and values obtainet from StateValueNetwork V
-    VPrevPh = tf.placeholder(dtype = dtype, shape=[None,1], name="previousValues") #values for previous iteration returned by StateValueNetwork V
-    totalEstimatedDiscountedRewardPh = tf.placeholder(dtype = dtype, shape=[None,1], name="totalEstimatedDiscountedReward") #total discounted cumulative reward estimated as advantage + previous values
+    logProbSampPh = tf.placeholder(dtype = tf.float32, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
+    advPh = tf.placeholder(dtype = tf.float32, shape=[None], name="advantages") #advantages obtained using GAE-lambda and values obtainet from StateValueNetwork V
+    VPrevPh = tf.placeholder(dtype = dtype, shape=[None], name="previousValues") #values for previous iteration returned by StateValueNetwork V
+    totalEstimatedDiscountedRewardPh = tf.placeholder(dtype = dtype, shape=[None], name="totalEstimatedDiscountedReward") #total discounted cumulative reward estimated as advantage + previous values
     policyParamsFlatten= tf.placeholder(dtype = dtype, shape=[None], name = "policyParams") #policy params flatten, used in assingment of pi params if KL rollback is enabled
     obsPh = tf.placeholder(dtype=tf.float32, shape=[None, inputLength], name="observations") #observations
     learningRateVfPh = tf.placeholder(dtype=dtype, shape=None, name="learningRateVfPh")#learning rate placeholder
@@ -346,7 +346,7 @@ with tf.Session(graph=graph) as sess:
             SVLossSum = 0
             while(start < total):    
                 end = np.amin([start+maxBatchSize, total])
-                avgBatch = sess.run(stateValueLoss, feed_dict={obsPh : observations[start:end], totalEstimatedDiscountedRewardPh : returns[start:end], VPrevPh:Vprevs[perm[start:end]]})
+                avgBatch = sess.run(stateValueLoss, feed_dict={obsPh : observations[start:end], totalEstimatedDiscountedRewardPh : returns[start:end], VPrevPh:Vprevs[start:end]})
                 SVLossSum += avgBatch*(end-start)
                 start = end
             SVLoss = SVLossSum/observations.shape[0]

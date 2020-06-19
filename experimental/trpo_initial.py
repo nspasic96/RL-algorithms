@@ -77,20 +77,34 @@ parser.add_argument('--max_iters_line_search', type=int, default=10,
                    help="maximum steps to take in line serach")
 parser.add_argument('--alpha', type=float, default=0.8,
                    help="defult step size in line serach")
+
 #parameters related to TRPO+
 parser.add_argument('--plus', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to add code optimizations 1-4')
+parser.add_argument('--plus_eps', type=float, default=0.2,
+                   help='epsilon for clipping value function, negative value to turn it off')
 parser.add_argument('--plus_returns', type=lambda x: (str(x).lower() == 'true'), default=True,
                    help='whether to return returns instead of reward for training')
 parser.add_argument('--plus_initialization', type=lambda x: (str(x).lower() == 'true'), default=True,
                    help='whether to initialize weights with orthogonal initializer')
-parser.add_argument('--plus_eps', type=float, default=0.2,
-                   help='epsilon for clipping value function, negative value to turn it off')
-parser.add_argument('--plus_grad_clip', type=float, default=1. ,
+parser.add_argument('--plus_lr_annealing', type=lambda x: (str(x).lower() == 'true'), default=True,
+                   help='whether to anneal Adam learning rate in every epoch')
+
+parser.add_argument('--plus_plus', type=lambda x: (str(x).lower() == 'true'), default=False,
+                   help='whether to add code optimizations 5-9')
+parser.add_argument('--plus_plus_reward_clipping', type=float, default=10. ,
+                   help='range in which to clip reward')
+parser.add_argument('--plus_plus_observation_normalization', type=lambda x: (str(x).lower() == 'true'), default=True,
+                   help='whether to normalize observations with running mean and std')
+parser.add_argument('--plus_plus_observation_clipping', type=float, default=10. ,
+                   help='range in which to clip observations after normalizing(if set to True)')
+parser.add_argument('--plus_plus_tanh', type=lambda x: (str(x).lower() == 'true'), default=True,
+                   help='tanh activations if set to true, relu otherwise')
+parser.add_argument('--plus_plus_grad_clip', type=float, default=1. ,
                    help='gradient l2 norm, negative value to turn it off')
+
 parser.add_argument('--norm_adv', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help="whether to normalize batch of advantages obtained from GAE buffer for policy optimization")
-
 
 args = parser.parse_args()
 
@@ -104,10 +118,23 @@ graph = tf.Graph()
 with tf.Session(graph=graph) as sess:
     
     env = gym.make(args.gym_id) 
-    if args.plus and args.plus_returns:
-        env = EnvironmentWrapper(env.env, normOb=True, rewardNormalization="returns", clipOb=10., clipRew=10., episodicMeanVarObs=False, episodicMeanVarRew=False, gamma=args.gamma)         
-    else:
-        env = EnvironmentWrapper(env.env, normOb=False, rewardNormalization=None, clipOb=1000000., clipRew=1000000)    
+    
+    clipOb=1000000.
+    clipRew=1000000
+    rewardNormalization=None
+    normOb=False
+    if args.plus:
+        if args.plus_returns:
+            rewardNormalization = "returns"        
+    if args.plus_plus:
+        if args.plus_plus_observation_normalization:
+            normOb = True
+        if args.plus_plus_observation_clipping > 0:
+            clipOb = args.plus_plus_observation_clipping
+        if args.plus_plus_reward_clipping > 0:
+            clipRew = args.plus_plus_reward_clipping
+        
+    env = EnvironmentWrapper(env.env, normOb=normOb, rewardNormalization=rewardNormalization, clipOb=clipOb, clipRew=clipRew, gamma=args.gamma)         
         
     np.random.seed(args.seed)
     env.seed(args.seed)
@@ -136,7 +163,11 @@ with tf.Session(graph=graph) as sess:
       
     #logging details      
     implSuffix = os.path.basename(__file__).rstrip(".py")
-    prefix = "plus-" if args.plus else ""
+    prefix = ""
+    if args.plus:
+        prefix = prefix + "plus-"
+    if args.plus_plus:
+        prefix = prefix + "plus-plus-"
     experimentName = f"{prefix}{args.gym_id}__{implSuffix}__{args.seed}__{int(time.time())}"
     writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
     
@@ -183,15 +214,18 @@ with tf.Session(graph=graph) as sess:
     V = StateValueNetwork(sess, inputLength, args.hidden_layers_state_value, args.learning_rate_state_value, obsPh, orthogonalInitializtion=orthogonalInitializtionV) #this network has method for training, but it is never used. Instead, training is done outside of this class
     if(discreteActionsSpace):
         policy = PolicyNetworkDiscrete(sess, inputLength, outputLength, args.hidden_layers_policy, obsPh, aPh, "Orig", orthogonalInitializtion=orthogonalInitializtionP) #policy network for discrete action space
-    else:          
-        policyActivations = [tf.nn.tanh for i in range(len(args.hidden_layers_policy))] + [None]    
+    else:    
+        if args.plus_plus and args.plus_plus_tanh:
+            policyActivations = [tf.nn.tanh for i in range(len(args.hidden_layers_policy))] + [None]
+        else:
+            policyActivations = [tf.nn.relu for i in range(len(args.hidden_layers_policy))] + [None]            
         policy = PolicyNetworkContinuous(sess, inputLength, outputLength, args.hidden_layers_policy, policyActivations, obsPh, aPh, "Orig", logStdInit=-0.5*np.ones((1, outputLength), dtype=np.float32), logStdTrainable=True, orthogonalInitializtion=orthogonalInitializtionP)
       
     #definition of losses to optimize
     ratio = tf.exp(policy.logProbWithCurrParams - logProbSampPh)
     Lloss = -tf.reduce_mean(ratio*advPh) # - sign because we want to maximize our objective
     
-    if  args.plus and args.plus_eps >= 0:
+    if  args.plus and args.plus_eps > 0:
         vLossUncliped = (V.output - totalEstimatedDiscountedRewardPh)**2
         vClipped = VPrevPh + tf.clip_by_value(V.output - VPrevPh, -args.plus_eps, args.plus_eps)
         vLossClipped = (vClipped - totalEstimatedDiscountedRewardPh)**2
@@ -205,10 +239,10 @@ with tf.Session(graph=graph) as sess:
     else:
         KLcontraint = utils.diagonal_gaussian_kl(policy.actionMean, policy.actionLogStd, oldActionMeanPh, oldActionLogStdPh)     
     
-    if args.plus and args.plus_grad_clip >= 0:
+    if args.plus_plus and args.plus_plus_grad_clip >= 0:
         optimizer = tf.train.AdamOptimizer(learning_rate = learningRatePh)    
         valGradients, valVaribales = zip(*optimizer.compute_gradients(stateValueLoss))  
-        valGradients, _ = tf.clip_by_global_norm(valGradients, args.plus_grad_clip)       
+        valGradients, _ = tf.clip_by_global_norm(valGradients, args.plus_plus_grad_clip)       
         svfOptimizationStep = optimizer.apply_gradients(zip(valGradients, valVaribales))
     else:
         svfOptimizationStep = tf.train.AdamOptimizer(args.learning_rate_state_value).minimize(stateValueLoss)
@@ -327,7 +361,7 @@ with tf.Session(graph=graph) as sess:
             start = 0
             while(start < total):    
                 end = np.amin([start+args.value_function_batch_size, total])
-                if args.plus:
+                if args.plus and args.plus_lr_annealing:
                     sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalEstimatedDiscountedRewardPh : returns[perm[start:end]], VPrevPh : Vprevs[perm[start:end]], learningRatePh: utils.annealedNoise(args.learning_rate_state_value,0,args.epochs,e)})
                 else:
                     sess.run(svfOptimizationStep, feed_dict={obsPh : observations[perm[start:end]], totalEstimatedDiscountedRewardPh : returns[perm[start:end]], VPrevPh : Vprevs[perm[start:end]]})
