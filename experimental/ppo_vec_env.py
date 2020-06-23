@@ -15,8 +15,9 @@ from EnvironmentWrapper import EnvironmentWrapper
 from networks import StateValueNetwork, PolicyNetworkDiscrete, PolicyNetworkContinuous
 from GAEBuffer import GAEBuffer
 from Statistics import Statistics
+from gym.wrappers import TimeLimit
 
-from stable_baselines.common.vec_env import DummyVecEnv
+from stable_baselines.common.vec_env import DummyVecEnv, VecEnvWrapper
 
 parser = argparse.ArgumentParser(description='PPO')
 
@@ -105,6 +106,7 @@ with tf.Session(graph=graph) as sess:
     def makeEnvLambda(gym_id, seed, normOb, rewardNormalization, clipOb, clipRew, **kwargs):
         def func():
             env = gym.make(gym_id)
+            env = TimeLimit(env, max_episode_steps = args.max_episode_len)
             env = EnvironmentWrapper(env.env, normOb=normOb, rewardNormalization=rewardNormalization, clipOb=clipOb, clipRew=clipRew, **kwargs)
             env.seed(args.seed)
             env.action_space.seed(args.seed)
@@ -266,7 +268,7 @@ with tf.Session(graph=graph) as sess:
             else:
                 sampledAction, logProbSampledAction, _, _ = sess.run([actionFinalOp, sampledLogProbsOp, actionMeanOp, actionLogStdOp], feed_dict = {obsPh : np.expand_dims(obs[l],0)})
                             
-            nextObss, rews, nextDones, infoss = env.step(sampledAction[0]) 
+            nextObss, rews, nextDones, infoss = env.step(sampledAction) 
             nextObs, rewards[l], nextDone, infos = nextObss[0], rews[0], nextDones[0], infoss[0]
             sampledLogProb[l] = logProbSampledAction[0]
             
