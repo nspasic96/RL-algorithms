@@ -67,6 +67,8 @@ parser.add_argument('--delta_final', type=float, default=0.01,
                    help='max KL distance between two successive distributions at the end of annealing')
 parser.add_argument('--state_value_network_updates', type=int, default=10,
                    help="number of updates for state-value network")
+parser.add_argument('--fisher_fraction', type=float, default=0.1,
+                   help="fraction of data that is used to estimate Fisher Information Matrix")
 parser.add_argument('--damping_coef', type=float, default=0.1,
                    help='damping coef')
 parser.add_argument('--cg_iters', type=int, default=10,
@@ -79,13 +81,13 @@ parser.add_argument('--alpha', type=float, default=0.8,
 #parameters related to TRPO+
 parser.add_argument('--plus', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to add code optimizations 1-4')
-parser.add_argument('--plus_eps', type=float, default=0.2,
+parser.add_argument('--plus_eps', type=float, default=-0.2,
                    help='epsilon for clipping value function, negative value to turn it off')
 parser.add_argument('--plus_returns', type=lambda x: (str(x).lower() == 'true'), default=True,
                    help='whether to return returns instead of reward for training')
 parser.add_argument('--plus_initialization', type=lambda x: (str(x).lower() == 'true'), default=True,
                    help='whether to initialize weights with orthogonal initializer')
-parser.add_argument('--plus_lr_annealing', type=lambda x: (str(x).lower() == 'true'), default=True,
+parser.add_argument('--plus_lr_annealing', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to anneal Adam learning rate in every epoch')
 
 parser.add_argument('--plus_plus', type=lambda x: (str(x).lower() == 'true'), default=False,
@@ -129,13 +131,12 @@ with tf.Session(graph=graph) as sess:
     clipOb=1000000.
     clipRew=1000000
     rewardNormalization=None
-    normOb=False
+    normOb=True
     if args.plus:
         if args.plus_returns:
             rewardNormalization = "returns"        
     if args.plus_plus:
-        if args.plus_plus_observation_normalization:
-            normOb = True
+        normOb = args.plus_plus_observation_normalization
         if args.plus_plus_observation_clipping > 0:
             clipOb = args.plus_plus_observation_clipping
         if args.plus_plus_reward_clipping > 0:
@@ -183,6 +184,7 @@ with tf.Session(graph=graph) as sess:
         cnf['input_length'] = inputLength
         cnf['output_length'] = outputLength
         cnf['exp_name_tb'] = experimentName
+        cnf['alg_name'] = "TRPO+" if (args.plus or args.plus_plus) else "TRPO"
         wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, tensorboard=True)
     
     #statistics to run
@@ -212,7 +214,7 @@ with tf.Session(graph=graph) as sess:
         additionalInfoLengths = [outputLength, outputLength]
     
     #definition of networks        
-    activation = tf.nn.tanh if (args.plus_plus and args.plus_plus_tanh) else tf.nn.tanh
+    activation = tf.nn.tanh
     initializationHidden = tf.orthogonal_initializer(2**0.5) if (args.plus and args.plus_initialization) else tf.contrib.layers.xavier_initializer()
     initializationFinalValue = tf.orthogonal_initializer(1) if (args.plus and args.plus_initialization) else tf.contrib.layers.xavier_initializer()
     initializationFinalPolicy = tf.orthogonal_initializer(0.01) if (args.plus and args.plus_initialization) else tf.contrib.layers.xavier_initializer()
@@ -261,7 +263,10 @@ with tf.Session(graph=graph) as sess:
         KLcontraint = utils.diagonal_gaussian_kl(actionMeanOp, actionLogStdOp, oldActionMeanPh, oldActionLogStdPh)     
     
     if args.plus_plus and args.plus_plus_grad_clip >= 0:
-        optimizer = tf.train.AdamOptimizer(learning_rate = learningRatePh)    
+        if args.plus_lr_annealing:
+            optimizer = tf.train.AdamOptimizer(learning_rate = learningRatePh)
+        else:
+            optimizer = tf.train.AdamOptimizer(learning_rate = args.learning_rate_policy)    
         valGradients, valVaribales = zip(*optimizer.compute_gradients(stateValueLoss))  
         valGradients, _ = tf.clip_by_global_norm(valGradients, args.plus_plus_grad_clip)       
         svfOptimizationStep = optimizer.apply_gradients(zip(valGradients, valVaribales))
@@ -361,12 +366,13 @@ with tf.Session(graph=graph) as sess:
  
         #if minimal is set to false, this will be not used, even though it will be passed in feed_dict for optimization step (see how opt. step is defined)
         learningRateVf = utils.annealedNoise(args.learning_rate_state_value, 0, args.epochs, e)
-            
+        
         policyUpdateStart = time.time()  
+        selectedForFisherEstimation = np.random.choice(args.epoch_len, int(args.epoch_len*args.fisher_fraction), replace=False)
         if discreteActionsSpace:
-            Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, logProbsAllPh : additionalInfos[0], obsPh : obs})
+            Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, logProbsAllPh : additionalInfos[0][selectedForFisherEstimation], obsPh : obs[selectedForFisherEstimation]})
         else:
-            Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1], obsPh : obs})
+            Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, oldActionMeanPh : additionalInfos[0][selectedForFisherEstimation], oldActionLogStdPh : additionalInfos[1][selectedForFisherEstimation], obsPh : obs[selectedForFisherEstimation]})
 
         grad = sess.run(utils.flat_grad(Lloss, policyParams), feed_dict = { obsPh : obs, aPh: actions, advPh : advantages, logProbSampPh : sampledLogProb})#, logProbsAllPh : allLogProbs})
         cjStart = time.time()

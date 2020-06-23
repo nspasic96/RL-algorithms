@@ -101,7 +101,7 @@ with tf.Session(graph=graph) as sess:
     if not args.minimal:
         env = DummyVecEnv([makeEnvLambda(args.gym_id, args.seed, normOb=True, rewardNormalization="returns", clipOb=args.observation_clipping, clipRew=args.reward_clipping, gamma=args.gamma)])
     else:
-        env = DummyVecEnv([makeEnvLambda(args.gym_id, args.seed, normOb=False, rewardNormalization=None, clipOb=1000000, clipRew=1000000)])
+        env = DummyVecEnv([makeEnvLambda(args.gym_id, args.seed, normOb=True, rewardNormalization=None, clipOb=1000000, clipRew=1000000)])
         
     np.random.seed(args.seed)  
     tf.set_random_seed(args.seed)
@@ -137,6 +137,7 @@ with tf.Session(graph=graph) as sess:
         cnf['input_length'] = inputLength
         cnf['output_length'] = outputLength
         cnf['exp_name_tb'] = experimentName
+        cnf['alg_name'] = "PPO-M" if args.minimal else "PPO"
         wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, tensorboard=True)   
     
     #definition of placeholders
@@ -162,7 +163,7 @@ with tf.Session(graph=graph) as sess:
     #definition of networks
     with tf.variable_scope("AllTrainableParams"):
         
-        activation = tf.nn.tanh if args.minimal else tf.nn.tanh
+        activation = tf.nn.tanh
         initializationHidden = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(2**0.5)
         initializationFinalValue = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(1)
         initializationFinalPolicy = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(0.01)
