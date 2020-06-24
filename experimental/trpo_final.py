@@ -11,6 +11,7 @@ import sys
 sys.path.append("../")
 
 import utils
+from collections import deque
 from EnvironmentWrapper import EnvironmentWrapper
 from Statistics import Statistics
 from gym.wrappers import TimeLimit
@@ -69,7 +70,7 @@ parser.add_argument('--state_value_network_updates', type=int, default=10,
                    help="number of updates for state-value network")
 parser.add_argument('--fisher_fraction', type=float, default=0.1,
                    help="fraction of data that is used to estimate Fisher Information Matrix")
-parser.add_argument('--damping_coef', type=float, default=0.1,
+parser.add_argument('--damping_coef', type=float, default=1.,
                    help='damping coef')
 parser.add_argument('--cg_iters', type=int, default=10,
                    help='number of iterations in cg algorithm')
@@ -155,18 +156,20 @@ with tf.Session(graph=graph) as sess:
     
     #summeries placeholders and summery scalar objects      
     epRewTestPh = tf.placeholder(tf.float32, shape=None, name='episode_test_real_reward_latest_mean_summary')
+    epRewTrainPh = tf.placeholder(tf.float32, shape=None, name='episode_train_real_reward_latest_mean_summary')
     epTotalRewPh = tf.placeholder(dtype, shape=None, name='episode_reward_train_summary')
     epLenPh = tf.placeholder(dtype, shape=None, name='episode_length_train_summary')
     SVLossPh = tf.placeholder(dtype, shape=None, name='value_function_loss_summary')
     SurrogateDiffPh = tf.placeholder(dtype, shape=None, name='surrogate_function_value_summary')
     KLPh = tf.placeholder(dtype, shape=None, name='kl_divergence_summary')
-    epRewLatestMeanSum = tf.summary.scalar('episode_test_reward_mean', epRewTestPh)
+    epRewLatestMeanTestSum = tf.summary.scalar('episode_test_reward_mean', epRewTestPh)
+    epRewLatestMeanTrainSum = tf.summary.scalar('episode_train_reward_mean', epRewTrainPh)
     epTotalRewSum = tf.summary.scalar('episode_reward_train', epTotalRewPh)
     epLenSum = tf.summary.scalar('episode_length_train', epLenPh)
     SVLossSummary = tf.summary.scalar('value_function_loss', SVLossPh)
     SurrogateDiffSum = tf.summary.scalar('surrogate_function_value', SurrogateDiffPh)
     KLSum = tf.summary.scalar('kl_divergence', KLPh)  
-      
+    
     #logging details      
     implSuffix = os.path.basename(__file__).rstrip(".py")
     prefix = ""
@@ -193,6 +196,7 @@ with tf.Session(graph=graph) as sess:
 
         statistics = {}
         statistics["test_reward"] = Statistics(statSizeRew, 1, "test_reward")
+        statistics["train_reward"] = Statistics(statSizeRew, 1, "train_reward")
     
     #definition of placeholders
     logProbSampPh = tf.placeholder(dtype = dtype, shape=[None], name="logProbSampled") #log probabiliy of action sampled from sampling distribution (pi_old)
@@ -279,6 +283,7 @@ with tf.Session(graph=graph) as sess:
     setPolicyParams = utils.assign_params_from_flat(policyParamsFlatten, policyParams)
     
     d, HxOp = utils.hesian_vector_product(KLcontraint, policyParams)
+    surrogateFlatLoss = utils.flat_grad(Lloss, policyParams)
     
     if args.damping_coef > 0:
         HxOp += args.damping_coef * d
@@ -292,6 +297,7 @@ with tf.Session(graph=graph) as sess:
     nextDone = 0      
     epLen = 0
     epTotalRew = 0
+    epTotalTrainRews = deque(maxlen = args.test_episodes)
 
     #algorithm
     for e in range(args.epochs):    
@@ -306,9 +312,6 @@ with tf.Session(graph=graph) as sess:
         additionalInfos = []
         additionalInfos.append(np.zeros((args.epoch_len,outputLength)))#for action means
         additionalInfos.append(np.zeros((args.epoch_len,outputLength)))#for log stds
-        
-        epLens = []
-        epTotalRews = []     
         
         epochSt = time.time()
         for l in range(args.epoch_len):
@@ -333,12 +336,10 @@ with tf.Session(graph=graph) as sess:
                 summaryRet, summaryLen = sess.run([epTotalRewSum, epLenSum], feed_dict = {epTotalRewPh:epTotalRew, epLenPh:epLen})
                 globalStep = e*args.epoch_len + l
                 writer.add_summary(summaryRet, globalStep)
-                writer.add_summary(summaryLen, globalStep)
-                
-                epLens.append(epLen)
-                epLen = 0
-                epTotalRews.append(epTotalRew)
-                epTotalRew = 0
+                writer.add_summary(summaryLen, globalStep)                
+                epTotalTrainRews.append(epTotalRew)
+                epLen=0
+                epTotalRew=0
                 
             epLen += 1
             epTotalRew += infos["origRew"]   
@@ -373,8 +374,8 @@ with tf.Session(graph=graph) as sess:
             Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, logProbsAllPh : additionalInfos[0][selectedForFisherEstimation], obsPh : obs[selectedForFisherEstimation]})
         else:
             Hx = lambda newDir : sess.run(HxOp, feed_dict={d : newDir, oldActionMeanPh : additionalInfos[0][selectedForFisherEstimation], oldActionLogStdPh : additionalInfos[1][selectedForFisherEstimation], obsPh : obs[selectedForFisherEstimation]})
-
-        grad = sess.run(utils.flat_grad(Lloss, policyParams), feed_dict = { obsPh : obs, aPh: actions, advPh : advantages, logProbSampPh : sampledLogProb})#, logProbsAllPh : allLogProbs})
+        
+        grad = sess.run(surrogateFlatLoss, feed_dict = { obsPh : obs, aPh: actions, advPh : advantages, logProbSampPh : sampledLogProb})#, logProbsAllPh : allLogProbs})
         cjStart = time.time()
         newDir = utils.conjugate_gradients(Hx, grad, args.cg_iters)    
         cjEnd = time.time()
@@ -406,11 +407,11 @@ with tf.Session(graph=graph) as sess:
                 LlossNew = LlossOld        
                 kl = 0 
                 print("Line search didn't find step size that satisfies KL constraint")
-            
-        policyUpdateEnd = time.time()      
+        
+        policyUpdateEnd = time.time()    
         
         print("\tPolicy in epoch {} updated in {}".format(e, policyUpdateEnd-policyUpdateStart))    
-        
+                
         svfUpdateStart = time.time()   
         total = args.epoch_len
         for j in range(args.state_value_network_updates):
@@ -456,7 +457,10 @@ with tf.Session(graph=graph) as sess:
     
         epochEnd = time.time()
         print("Epoch {} ended in {}".format(e, epochEnd-epochSt))
+      
         
+    summaryLatestTrainRet = sess.run(epRewLatestMeanTrainSum, feed_dict = {epRewTrainPh:np.mean(epTotalTrainRews)})
+    writer.add_summary(summaryLatestTrainRet)   
     print("Testing agent without noise for {} episodes after training".format(args.test_episodes))
     osbTest = env.reset()
     testRets = []
@@ -478,8 +482,8 @@ with tf.Session(graph=graph) as sess:
         
         
     meanLatest = np.mean(testRets[1:])
-    summaryLatestRet = sess.run(epRewLatestMeanSum, feed_dict = {epRewTestPh:meanLatest})
-    writer.add_summary(summaryLatestRet)   
+    summaryLatestTestRet = sess.run(epRewLatestMeanTestSum, feed_dict = {epRewTestPh:meanLatest})
+    writer.add_summary(summaryLatestTestRet)   
     
     writer.close()
     env.close()

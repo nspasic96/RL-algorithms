@@ -113,12 +113,14 @@ with tf.Session(graph=graph) as sess:
     
     #summeries placeholders and summery scalar objects
     epRewTestPh = tf.placeholder(tf.float32, shape=None, name='episode_test_real_reward_mean_summary')
+    epRewTrainPh = tf.placeholder(tf.float32, shape=None, name='episode_train_real_reward_latest_mean_summary')
     epTotalRewPh = tf.placeholder(tf.float32, shape=None, name='episode_reward_train_summary')
     epLenPh = tf.placeholder(tf.float32, shape=None, name='episode_length_train_summary')
     SVLossPh = tf.placeholder(tf.float32, shape=None, name='value_function_loss_summary')
     LlossNewPh = tf.placeholder(tf.float32, shape=None, name='surrogate_function_value_summary')
     KLPh = tf.placeholder(dtype, shape=None, name='kl_divergence_summary')
-    epRewLatestMeanSum = tf.summary.scalar('episode_test_reward_mean', epRewTestPh)
+    epRewLatestMeanTestSum = tf.summary.scalar('episode_test_reward_mean', epRewTestPh)
+    epRewLatestMeanTrainSum = tf.summary.scalar('episode_train_reward_mean', epRewTrainPh)
     epTotalRewSum = tf.summary.scalar('episode_reward_train', epTotalRewPh)
     epLenSum = tf.summary.scalar('episode_length_train', epLenPh)
     SVLossSummary = tf.summary.scalar('value_function_loss', SVLossPh)
@@ -228,6 +230,7 @@ with tf.Session(graph=graph) as sess:
     nextDone = 0      
     epLen = 0
     epTotalRew = 0
+    epTotalTrainRews = []   
 
     #algorithm
     for e in range(args.epochs):
@@ -240,8 +243,7 @@ with tf.Session(graph=graph) as sess:
         actions = np.zeros((args.epoch_len, outputLength))
         sampledLogProb = np.zeros((args.epoch_len,))
         
-        epLens = []
-        epTotalRews = []     
+        epLens = []  
         
         epochSt = time.time()
         for l in range(args.epoch_len):
@@ -267,9 +269,8 @@ with tf.Session(graph=graph) as sess:
                 writer.add_summary(summaryRet, globalStep)
                 writer.add_summary(summaryLen, globalStep)
                 
-                epLens.append(epLen)
+                epTotalTrainRews.append(epTotalRew)
                 epLen = 0
-                epTotalRews.append(epTotalRew)
                 epTotalRew = 0
                 
             epLen += 1
@@ -278,12 +279,7 @@ with tf.Session(graph=graph) as sess:
               
         simulationEnd = time.time()      
         print("\tSimulation in epoch {} finished in {}".format(e, simulationEnd-epochSt))
-                
-        summaryRet, summaryLen = sess.run([epTotalRewSum, epLenSum], feed_dict = {epTotalRewPh:np.mean(epTotalRews), epLenPh:np.mean(epLens)})
-        globalStep = e*args.epoch_len + l
-        writer.add_summary(summaryRet, globalStep)
-        writer.add_summary(summaryLen, globalStep) 
-        
+       
         predVals = sess.run(vfOutputOp, feed_dict = {obsPh : obs})
                 
         #calculating advantages
@@ -335,7 +331,9 @@ with tf.Session(graph=graph) as sess:
         
         epochEnd = time.time()
         print("Epoch {} ended in {}".format(e, epochEnd-epochSt))
-    
+        
+    summaryLatestTrainRet = sess.run(epRewLatestMeanTrainSum, feed_dict = {epRewTrainPh:np.mean(epTotalTrainRews)})
+    writer.add_summary(summaryLatestTrainRet)   
     print("Testing agent without noise for {} episodes after training".format(args.test_episodes))
     osbTest = env.reset()
     testRets = []
@@ -357,7 +355,7 @@ with tf.Session(graph=graph) as sess:
         
         
     meanLatest = np.mean(testRets[1:])
-    summaryLatestRet = sess.run(epRewLatestMeanSum, feed_dict = {epRewTestPh:meanLatest})
+    summaryLatestRet = sess.run(epRewLatestMeanTestSum, feed_dict = {epRewTestPh:meanLatest})
     writer.add_summary(summaryLatestRet)    
     
     writer.close()
