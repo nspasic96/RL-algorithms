@@ -49,7 +49,7 @@ parser.add_argument('--wandb_log',  type=lambda x: (str(x).lower() == 'true'), d
                    help='whether to log results to wandb')
 
 #test parameters
-parser.add_argument('--test_episodes', type=int, default=100,
+parser.add_argument('--test_episodes', type=int, default=20,
                    help='when testing, test_episodes will be played and taken for calculting statistics')
 parser.add_argument('--render', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to render agent when it is being tested')
@@ -69,7 +69,9 @@ parser.add_argument('--reward_clipping', type=float, default=10. ,
                    help='range in which to clip reward')
 parser.add_argument('--observation_clipping', type=float, default=10. ,
                    help='range in which to clip observations after normalizing')
-parser.add_argument('--norm_adv', type=lambda x: (str(x).lower() == 'true'), default=False,
+parser.add_argument('--grad_clipping', type=float, default=0.5 ,
+                   help='clip gradient such that norm is equal to grad_clipping')
+parser.add_argument('--norm_adv', type=lambda x: (str(x).lower() == 'true'), default=True,
                    help="whether to normalize batch of advantages obtained from GAE buffer for policy optimization")
     
 #parameters related to PPO-M
@@ -119,6 +121,7 @@ with tf.Session(graph=graph) as sess:
     SVLossPh = tf.placeholder(tf.float32, shape=None, name='value_function_loss_summary')
     LlossNewPh = tf.placeholder(tf.float32, shape=None, name='surrogate_function_value_summary')
     KLPh = tf.placeholder(dtype, shape=None, name='kl_divergence_summary')
+    KLFirstPh = tf.placeholder(dtype, shape=None, name='kl_divergence_first_summary')
     epRewLatestMeanTestSum = tf.summary.scalar('episode_test_reward_mean', epRewTestPh)
     epRewLatestMeanTrainSum = tf.summary.scalar('episode_train_reward_mean', epRewTrainPh)
     epTotalRewSum = tf.summary.scalar('episode_reward_train', epTotalRewPh)
@@ -126,6 +129,7 @@ with tf.Session(graph=graph) as sess:
     SVLossSummary = tf.summary.scalar('value_function_loss', SVLossPh)
     LlossNewSum = tf.summary.scalar('surrogate_function_value', LlossNewPh)
     KLSum = tf.summary.scalar('kl_divergence', KLPh)      
+    KLFirstSum = tf.summary.scalar('kl_divergence_first', KLFirstPh)      
     
     implSuffix = os.path.basename(__file__).rstrip(".py")
     prefix = "minimal-" if args.minimal else ""
@@ -164,30 +168,35 @@ with tf.Session(graph=graph) as sess:
     
     #definition of networks
     with tf.variable_scope("AllTrainableParams"):
-        
-        activation = tf.nn.tanh
-        initializationHidden = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(2**0.5)
-        initializationFinalValue = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(1)
-        initializationFinalPolicy = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(0.01)
-        
-        #value network
-        curNode = tf.layers.Dense(args.hidden_layers_state_value[0], activation, kernel_initializer=initializationHidden, name="fc1")(obsPh)
-        for i,l in enumerate(args.hidden_layers_state_value[1:]):
-            curNode = tf.layers.Dense(l, activation, kernel_initializer=initializationHidden, name="fc{}".format(i+2))(curNode)
+        if discreteActionsSpace:
+            #TODO            
+            KLcontraint = utils.categorical_kl(logProbWithCurrParamsOp, logProbsAllPh) 
+        else:
+            activation = tf.nn.tanh
+            initializationHidden = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(2**0.5)
+            initializationFinalValue = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(1)
+            initializationFinalPolicy = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(0.01)
             
-        vfOutputOp = tf.squeeze(tf.layers.Dense(1, kernel_initializer=initializationFinalValue, name="outputV")(curNode),1)
-        
-        #policy network
-        curNode = tf.layers.Dense(args.hidden_layers_policy[0], activation, kernel_initializer=initializationHidden, name="fc1")(obsPh)
-        for i,l in enumerate(args.hidden_layers_policy[1:]):
-            curNode = tf.layers.Dense(l, activation, kernel_initializer=initializationHidden, name="fc{}".format(i+2))(curNode)
-           
-        actionMeanOp = tf.layers.Dense(outputLength, kernel_initializer=initializationFinalPolicy, name="outputA")(curNode)
-        actionLogStdOp = tf.get_variable(name="ActionsLogStdDetachedTrainable", initializer=tf.zeros_initializer(), shape=[1, outputLength], trainable=True)
-        actionStdOp = tf.math.exp(actionLogStdOp)                
-        actionFinalOp = actionMeanOp + tf.random_normal(tf.shape(actionMeanOp)) * actionStdOp 
-        sampledLogProbsOp = utils.gaussian_likelihood(actionFinalOp, actionMeanOp, actionLogStdOp)
-        logProbWithCurrParamsOp = utils.gaussian_likelihood(aPh, actionMeanOp, actionLogStdOp)         
+            #value network
+            curNode = tf.layers.Dense(args.hidden_layers_state_value[0], activation, kernel_initializer=initializationHidden, name="fc1")(obsPh)
+            for i,l in enumerate(args.hidden_layers_state_value[1:]):
+                curNode = tf.layers.Dense(l, activation, kernel_initializer=initializationHidden, name="fc{}".format(i+2))(curNode)
+                
+            vfOutputOp = tf.squeeze(tf.layers.Dense(1, kernel_initializer=initializationFinalValue, name="outputV")(curNode),1)
+            
+            #policy network
+            curNode = tf.layers.Dense(args.hidden_layers_policy[0], activation, kernel_initializer=initializationHidden, name="fc1")(obsPh)
+            for i,l in enumerate(args.hidden_layers_policy[1:]):
+                curNode = tf.layers.Dense(l, activation, kernel_initializer=initializationHidden, name="fc{}".format(i+2))(curNode)
+               
+            actionMeanOp = tf.layers.Dense(outputLength, kernel_initializer=initializationFinalPolicy, name="outputA")(curNode)
+            actionLogStdOp = tf.get_variable(name="ActionsLogStdDetachedTrainable", initializer=tf.zeros_initializer(), shape=[1, outputLength], trainable=True)
+            actionStdOp = tf.math.exp(actionLogStdOp)                
+            actionFinalOp = actionMeanOp + tf.random_normal(tf.shape(actionMeanOp)) * actionStdOp 
+            sampledLogProbsOp = utils.gaussian_likelihood(actionFinalOp, actionMeanOp, actionLogStdOp)
+            logProbWithCurrParamsOp = utils.gaussian_likelihood(aPh, actionMeanOp, actionLogStdOp)  
+            
+            KLcontraint = utils.diagonal_gaussian_kl(actionMeanOp, actionLogStdOp, oldActionMeanPh, oldActionLogStdPh)   
     
     #statistics to run
     if args.run_statistics:
@@ -210,9 +219,17 @@ with tf.Session(graph=graph) as sess:
     else:
         stateValueLoss = tf.reduce_mean((vfOutputOp - totalEstimatedDiscountedRewardPh)**2)
                
-    if not args.minimal:        
-        optimizationStepPolicy = tf.train.AdamOptimizer(learning_rate = learningRatePolicyPh, epsilon=1e-5).minimize(Lloss)
-        optimizationStepVf = tf.train.AdamOptimizer(learning_rate = learningRateVfPh, epsilon=1e-5).minimize(stateValueLoss)
+    if not args.minimal and args.grad_clipping > 0:                
+        optimizatierVf = tf.train.AdamOptimizer(learning_rate = learningRateVfPh, epsilon=1e-5)
+        optimizatierPolicy = tf.train.AdamOptimizer(learning_rate = learningRatePolicyPh, epsilon=1e-5)
+        
+        valGradients, valVaribales = zip(*optimizatierVf.compute_gradients(stateValueLoss))  
+        valGradients, _ = tf.clip_by_global_norm(valGradients, args.grad_clipping)       
+        optimizationStepVf = optimizatierVf.apply_gradients(zip(valGradients, valVaribales))
+        
+        polGradients, polVaribales = zip(*optimizatierPolicy.compute_gradients(Lloss))  
+        polGradients, _ = tf.clip_by_global_norm(polGradients, args.grad_clipping)       
+        optimizationStepPolicy = optimizatierPolicy.apply_gradients(zip(polGradients, polVaribales))
     else:        
         optimizationStepPolicy = tf.train.AdamOptimizer(learning_rate = args.learning_rate_policy, epsilon=1e-5).minimize(Lloss)
         optimizationStepVf = tf.train.AdamOptimizer(learning_rate = args.learning_rate_state_value, epsilon=1e-5).minimize(stateValueLoss)
@@ -242,6 +259,9 @@ with tf.Session(graph=graph) as sess:
         predVals = np.zeros((args.epoch_len,))
         actions = np.zeros((args.epoch_len, outputLength))
         sampledLogProb = np.zeros((args.epoch_len,))
+        additionalInfos = []
+        additionalInfos.append(np.zeros((args.epoch_len,outputLength)))#for action means
+        additionalInfos.append(np.zeros((args.epoch_len,outputLength)))#for log stds
         
         epLens = []  
         
@@ -256,8 +276,9 @@ with tf.Session(graph=graph) as sess:
                 sampledAction, logProbSampledAction, logProbsAll = policy.getSampledActions(obs[l])
                 additionalInfos = [logProbsAll]
             else:
-                sampledAction, logProbSampledAction = sess.run([actionFinalOp, sampledLogProbsOp], feed_dict = {obsPh : np.expand_dims(obs[l],0)})
-                            
+                sampledAction, logProbSampledAction, actionsMean, actionLogStd = sess.run([actionFinalOp, sampledLogProbsOp, actionMeanOp, actionLogStdOp], feed_dict = {obsPh : np.expand_dims(obs[l],0)})
+                additionalInfos[0][l] = actionsMean
+                additionalInfos[1][l] = actionLogStd           
             nextObss, rews, nextDones, infoss = env.step(sampledAction) 
             nextObs, rewards[l], nextDone, infos = nextObss[0], rews[0], nextDones[0], infoss[0]
             sampledLogProb[l] = logProbSampledAction[0]
@@ -307,7 +328,7 @@ with tf.Session(graph=graph) as sess:
         for j in range(args.update_epochs):
             perm = np.random.permutation(total)
             start = 0
-            oldParams = sess.run(getTrainableParams)
+            #oldParams = sess.run(getTrainableParams)
             
             while(start < total):    
                 end = np.amin([start+args.minibatch_size, total])
@@ -316,7 +337,15 @@ with tf.Session(graph=graph) as sess:
                 sess.run(optimizationStepVf, feed_dict={obsPh : obs[perm[start:end]], totalEstimatedDiscountedRewardPh : returns[perm[start:end]], aPh: actions[perm[start:end]], VPrevPh:predVals[perm[start:end]], advPh : utils.normalize(advantages[perm[start:end]]) if args.norm_adv else advantages[perm[start:end]], logProbSampPh : sampledLogProb[perm[start:end]], learningRateVfPh:learningRateVf})
 
                 start = end
-            
+            if j==1:#log just first update when ratios are 1
+                klFirst = sess.run(KLcontraint,  feed_dict={obsPh : obs, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1]})
+                summaryKLFirst = sess.run(KLFirstSum, feed_dict={KLFirstPh:kl})
+                writer.add_summary(summaryKLFirst)
+                
+            kl = sess.run(KLcontraint,  feed_dict={obsPh : obs, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1]})
+            summaryKL = sess.run(KLSum, feed_dict={KLPh:kl})
+            writer.add_summary(summaryKL)
+        
         updateEnd = time.time()      
         
         print("\tUpdate in epoch {} updated in {}".format(e, updateEnd-updateStart))    

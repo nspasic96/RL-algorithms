@@ -54,7 +54,7 @@ parser.add_argument('--wandb_log', type=lambda x: (str(x).lower() == 'true'), de
                    help='whether to log results to wandb')
 
 #test parameters
-parser.add_argument('--test_episodes', type=int, default=100,
+parser.add_argument('--test_episodes', type=int, default=20,
                    help='when testing, test_episodes will be played and taken for calculting statistics')
 parser.add_argument('--render', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to render agent when it is being tested')
@@ -68,9 +68,9 @@ parser.add_argument('--delta_final', type=float, default=0.01,
                    help='max KL distance between two successive distributions at the end of annealing')
 parser.add_argument('--state_value_network_updates', type=int, default=10,
                    help="number of updates for state-value network")
-parser.add_argument('--fisher_fraction', type=float, default=0.1,
+parser.add_argument('--fisher_fraction', type=float, default=1.,
                    help="fraction of data that is used to estimate Fisher Information Matrix")
-parser.add_argument('--damping_coef', type=float, default=1.,
+parser.add_argument('--damping_coef', type=float, default=0.1,
                    help='damping coef')
 parser.add_argument('--cg_iters', type=int, default=10,
                    help='number of iterations in cg algorithm')
