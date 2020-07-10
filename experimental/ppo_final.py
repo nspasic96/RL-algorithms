@@ -11,6 +11,8 @@ import sys
 sys.path.append("../")
 
 import utils
+
+from collections import deque
 from EnvironmentWrapper import EnvironmentWrapper
 from Statistics import Statistics
 from gym.wrappers import TimeLimit
@@ -47,37 +49,46 @@ parser.add_argument('--wandb_projet_name', type=str, default="proximal-policy-op
                    help="the wandb's project name")
 parser.add_argument('--wandb_log',  type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to log results to wandb')
+parser.add_argument('--alg_name', type=str, default=None,
+                   help="algorithm name, if remains none default values will be used")
 
 #test parameters
-parser.add_argument('--test_episodes', type=int, default=20,
-                   help='when testing, test_episodes will be played and taken for calculting statistics')
+parser.add_argument('--test_episodes_with_noise', type=int, default=100,
+                   help='when testing, test_episodes_with_noise will be played and taken for calculting statistics')
+parser.add_argument('--test_episodes_without_noise', type=int, default=100,
+                   help='when testing, test_episodes_without_noise will be played and taken for calculting statistics')
 parser.add_argument('--render', type=lambda x: (str(x).lower() == 'true'), default=False,
                    help='whether to render agent when it is being tested')
-parser.add_argument('--run_statistics', type=lambda x: (str(x).lower() == 'true'), default=True,
-                   help='whether to run statistics, necessary if testing agent')
 
 #PPO specific parameters
 parser.add_argument('--update_epochs', type=int, default=10,
                    help="number of updates")
-parser.add_argument('--minibatch_size', type=int, default=64,
-                   help="batch size for policy network optimization")
 parser.add_argument('--eps', type=float, default=0.2,
                    help='epsilon for clipping in objective')
-parser.add_argument('--value_eps', type=float, default=0.2,
-                   help='epsilon for clipping value function, negative value to turn it off')
-parser.add_argument('--reward_clipping', type=float, default=10. ,
-                   help='range in which to clip reward')
-parser.add_argument('--observation_clipping', type=float, default=10. ,
-                   help='range in which to clip observations after normalizing')
-parser.add_argument('--grad_clipping', type=float, default=0.5 ,
-                   help='clip gradient such that norm is equal to grad_clipping')
-parser.add_argument('--norm_adv', type=lambda x: (str(x).lower() == 'true'), default=True,
-                   help="whether to normalize batch of advantages obtained from GAE buffer for policy optimization")
-    
-#parameters related to PPO-M
-parser.add_argument('--minimal', type=lambda x: (str(x).lower() == 'true'), default=False,
-                   help='whether to omit code optimizations 1-9')
-
+parser.add_argument('--val_eps', type=float, default=-0.2,
+                   help='epsilon for clipping value function, negative value to turn it off')#1
+parser.add_argument('--reward_scaling', type=lambda x: (str(x).lower() == 'true'), default=False,
+                   help='whether environment should transform reward before returning it')#2
+parser.add_argument('--orthogonal_initialization', type=lambda x: (str(x).lower() == 'true'), default=False,
+                   help='whether to initialize weights with orthogonal initializer')#3
+parser.add_argument('--adam_eps', type=float, default=1e-8,
+                   help="epsilon for adam")
+parser.add_argument('--lr_annealing', type=lambda x: (str(x).lower() == 'true'), default=False,
+                   help='whether to anneal Adam learning rate in every epoch')#4
+parser.add_argument('--rew_clip', type=float, default=-10. ,
+                   help='range in which to clip reward')#5
+parser.add_argument('--obs_norm', type=lambda x: (str(x).lower() == 'true'), default=False,
+                   help="whether to normalize observations")#6
+parser.add_argument('--obs_clip', type=float, default=-10. ,
+                   help='range in which to clip observations after normalizing')#7
+parser.add_argument('--tanh_act', type=lambda x: (str(x).lower() == 'true'), default=False,
+                   help='tanh activations if set to true, relu otherwise')#8
+parser.add_argument('--grad_clip', type=float, default=-1. ,
+                   help='clip gradient such that norm is equal to grad_clipping')#9
+parser.add_argument('--norm_adv', type=lambda x: (str(x).lower() == 'true'), default=False,
+                   help="whether to normalize batch of advantages obtained from GAE buffer for policy optimization")#10
+parser.add_argument('--minibatch_size', type=int, default=2048,
+                   help="batch size for policy network optimization")#11
 args = parser.parse_args()
 
 dtype = tf.float32
@@ -99,12 +110,13 @@ with tf.Session(graph=graph) as sess:
             env.observation_space.seed(args.seed)  
             return env
         return func
-        
-    if not args.minimal:
-        env = DummyVecEnv([makeEnvLambda(args.gym_id, args.seed, normOb=True, rewardNormalization="returns", clipOb=args.observation_clipping, clipRew=args.reward_clipping, gamma=args.gamma)])
-    else:
-        env = DummyVecEnv([makeEnvLambda(args.gym_id, args.seed, normOb=True, rewardNormalization=None, clipOb=1000000, clipRew=1000000)])
-        
+    
+    rewardNormalization = "returns" if args.reward_scaling else None
+    clipOb = 100000. if args.obs_clip < 0 else args.obs_clip
+    clipRew = 100000. if args.rew_clip < 0 else args.rew_clip    
+    
+    env = DummyVecEnv([makeEnvLambda(args.gym_id, args.seed, normOb=args.obs_norm, rewardNormalization=rewardNormalization, clipOb=clipOb, clipRew=clipRew, gamma=args.gamma)])
+      
     np.random.seed(args.seed)  
     tf.set_random_seed(args.seed)
 
@@ -132,8 +144,7 @@ with tf.Session(graph=graph) as sess:
     KLFirstSum = tf.summary.scalar('kl_divergence_first', KLFirstPh)      
     
     implSuffix = os.path.basename(__file__).rstrip(".py")
-    prefix = "minimal-" if args.minimal else ""
-    experimentName = f"{prefix}{args.gym_id}__{implSuffix}__{args.seed}__{int(time.time())}"
+    experimentName = f"{args.gym_id}__{implSuffix}__{args.seed}__{int(time.time())}"
     writer = tf.summary.FileWriter(f"runs/{experimentName}", graph = sess.graph)
     
     if args.wandb_log:
@@ -143,7 +154,12 @@ with tf.Session(graph=graph) as sess:
         cnf['input_length'] = inputLength
         cnf['output_length'] = outputLength
         cnf['exp_name_tb'] = experimentName
-        cnf['alg_name'] = "PPO-M" if args.minimal else "PPO"
+        
+        if args.alg_name is None:
+            cnf['alg_name'] = "PPO-No-Name"
+        else:
+            cnf['alg_name'] = args.alg_name
+            
         wandb.init(project=args.wandb_projet_name, config=cnf, name=experimentName, tensorboard=True)   
     
     #definition of placeholders
@@ -172,10 +188,10 @@ with tf.Session(graph=graph) as sess:
             #TODO            
             KLcontraint = utils.categorical_kl(logProbWithCurrParamsOp, logProbsAllPh) 
         else:
-            activation = tf.nn.tanh
-            initializationHidden = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(2**0.5)
-            initializationFinalValue = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(1)
-            initializationFinalPolicy = tf.contrib.layers.xavier_initializer() if args.minimal else tf.orthogonal_initializer(0.01)
+            activation = tf.nn.tanh if args.tanh_act else tf.nn.relu
+            initializationHidden = tf.orthogonal_initializer(2**0.5) if args.orthogonal_initialization else tf.contrib.layers.xavier_initializer()
+            initializationFinalValue = tf.orthogonal_initializer(1) if args.orthogonal_initialization else tf.contrib.layers.xavier_initializer()
+            initializationFinalPolicy = tf.orthogonal_initializer(0.01) if args.orthogonal_initialization else tf.contrib.layers.xavier_initializer()
             
             #value network
             curNode = tf.layers.Dense(args.hidden_layers_state_value[0], activation, kernel_initializer=initializationHidden, name="fc1")(obsPh)
@@ -190,7 +206,7 @@ with tf.Session(graph=graph) as sess:
                 curNode = tf.layers.Dense(l, activation, kernel_initializer=initializationHidden, name="fc{}".format(i+2))(curNode)
                
             actionMeanOp = tf.layers.Dense(outputLength, kernel_initializer=initializationFinalPolicy, name="outputA")(curNode)
-            actionLogStdOp = tf.get_variable(name="ActionsLogStdDetachedTrainable", initializer=tf.zeros_initializer(), shape=[1, outputLength], trainable=True)
+            actionLogStdOp = tf.get_variable(name="ActionsLogStdDetachedTrainable", initializer=-0.3*np.ones((1, outputLength), dtype=np.float32), trainable=True)
             actionStdOp = tf.math.exp(actionLogStdOp)                
             actionFinalOp = actionMeanOp + tf.random_normal(tf.shape(actionMeanOp)) * actionStdOp 
             sampledLogProbsOp = utils.gaussian_likelihood(actionFinalOp, actionMeanOp, actionLogStdOp)
@@ -198,41 +214,40 @@ with tf.Session(graph=graph) as sess:
             
             KLcontraint = utils.diagonal_gaussian_kl(actionMeanOp, actionLogStdOp, oldActionMeanPh, oldActionLogStdPh)   
     
-    #statistics to run
-    if args.run_statistics:
-        statSizeRew = args.test_episodes
-
-        statistics = {}
-        statistics["test_reward"] = Statistics(statSizeRew, 1, "test_reward")
-      
     #definition of losses to optimize
     ratio = tf.exp(logProbWithCurrParamsOp - logProbSampPh)
     clippedRatio = tf.clip_by_value(ratio, 1-args.eps, 1+args.eps)
     Lloss = -tf.reduce_mean(tf.minimum(ratio*advPh,clippedRatio*advPh)) # - sign because we want to maximize our objective
     
-    if not args.minimal:
+    if args.val_eps > 0:
         vLossUncliped = (vfOutputOp - totalEstimatedDiscountedRewardPh)**2
-        vClipped = VPrevPh + tf.clip_by_value(vfOutputOp - VPrevPh, -args.value_eps, args.value_eps)
+        vClipped = VPrevPh + tf.clip_by_value(vfOutputOp - VPrevPh, -args.val_eps, args.val_eps)
         vLossClipped = (vClipped - totalEstimatedDiscountedRewardPh)**2
         vLossMax = tf.maximum(vLossClipped, vLossUncliped)
         stateValueLoss = tf.reduce_mean(0.5 * vLossMax)
     else:
         stateValueLoss = tf.reduce_mean((vfOutputOp - totalEstimatedDiscountedRewardPh)**2)
                
-    if not args.minimal and args.grad_clipping > 0:                
-        optimizatierVf = tf.train.AdamOptimizer(learning_rate = learningRateVfPh, epsilon=1e-5)
-        optimizatierPolicy = tf.train.AdamOptimizer(learning_rate = learningRatePolicyPh, epsilon=1e-5)
-        
+    #create optimizers depending on lr annealing option
+    if args.lr_annealing:                
+        optimizatierVf = tf.train.AdamOptimizer(learning_rate = learningRateVfPh, epsilon=args.adam_eps)
+        optimizatierPolicy = tf.train.AdamOptimizer(learning_rate = learningRatePolicyPh, epsilon=args.adam_eps)
+    else:
+        optimizatierVf = tf.train.AdamOptimizer(learning_rate = args.learning_rate_state_value, epsilon=args.adam_eps)        
+        optimizatierPolicy = tf.train.AdamOptimizer(learning_rate = args.learning_rate_policy, epsilon=args.adam_eps)
+    
+    #create optimization step dependingo on grad_clip value
+    if args.grad_clip > 0:
         valGradients, valVaribales = zip(*optimizatierVf.compute_gradients(stateValueLoss))  
-        valGradients, _ = tf.clip_by_global_norm(valGradients, args.grad_clipping)       
+        valGradients, _ = tf.clip_by_global_norm(valGradients, args.grad_clip)       
         optimizationStepVf = optimizatierVf.apply_gradients(zip(valGradients, valVaribales))
         
         polGradients, polVaribales = zip(*optimizatierPolicy.compute_gradients(Lloss))  
-        polGradients, _ = tf.clip_by_global_norm(polGradients, args.grad_clipping)       
+        polGradients, _ = tf.clip_by_global_norm(polGradients, args.grad_clip)       
         optimizationStepPolicy = optimizatierPolicy.apply_gradients(zip(polGradients, polVaribales))
-    else:        
-        optimizationStepPolicy = tf.train.AdamOptimizer(learning_rate = args.learning_rate_policy, epsilon=1e-5).minimize(Lloss)
-        optimizationStepVf = tf.train.AdamOptimizer(learning_rate = args.learning_rate_state_value, epsilon=1e-5).minimize(stateValueLoss)
+    else:
+         optimizationStepVf = optimizatierVf.minimize(stateValueLoss)
+         optimizationStepPolicy = optimizatierPolicy.minimize(Lloss)
        
     trainableParams = utils.get_vars("AllTrainableParams")
     getTrainableParams = utils.flat_concat(trainableParams)
@@ -247,7 +262,7 @@ with tf.Session(graph=graph) as sess:
     nextDone = 0      
     epLen = 0
     epTotalRew = 0
-    epTotalTrainRews = []   
+    epTotalTrainRews = deque(maxlen = args.test_episodes_with_noise)   
 
     #algorithm
     for e in range(args.epochs):
@@ -306,6 +321,7 @@ with tf.Session(graph=graph) as sess:
         #calculating advantages
         lastValue = sess.run(vfOutputOp, feed_dict={obsPh:np.expand_dims(nextObs,0)})
         advantages = np.zeros_like(rewards)
+        returns = np.zeros_like(rewards)
         lastgaelam = 0
         for t in reversed(range(args.epoch_len)):
             if t == args.epoch_len - 1:
@@ -316,9 +332,9 @@ with tf.Session(graph=graph) as sess:
                 nextValue = predVals[t+1]
             delta = rewards[t] + args.gamma * nextValue * nextNonTerminal - predVals[t]
             advantages[t] = lastgaelam = delta + args.gamma * args.lambd * nextNonTerminal * lastgaelam
+            
         returns = advantages + predVals
  
-        #if minimal is set to false, this will be not used, even though it will be passed in feed_dict for optimization step (see how opt. step is defined)
         learningRatePolicy = utils.annealedNoise(args.learning_rate_policy, 0, args.epochs, e)
         learningRateVf = utils.annealedNoise(args.learning_rate_state_value, 0, args.epochs, e)
     
@@ -334,18 +350,20 @@ with tf.Session(graph=graph) as sess:
                 end = np.amin([start+args.minibatch_size, total])
                 
                 sess.run(optimizationStepPolicy, feed_dict={obsPh : obs[perm[start:end]], aPh: actions[perm[start:end]], VPrevPh:predVals[perm[start:end]], advPh : utils.normalize(advantages[perm[start:end]]) if args.norm_adv else advantages[perm[start:end]], logProbSampPh : sampledLogProb[perm[start:end]], learningRatePolicyPh:learningRatePolicy})
-                sess.run(optimizationStepVf, feed_dict={obsPh : obs[perm[start:end]], totalEstimatedDiscountedRewardPh : returns[perm[start:end]], aPh: actions[perm[start:end]], VPrevPh:predVals[perm[start:end]], advPh : utils.normalize(advantages[perm[start:end]]) if args.norm_adv else advantages[perm[start:end]], logProbSampPh : sampledLogProb[perm[start:end]], learningRateVfPh:learningRateVf})
+                sess.run(optimizationStepVf, feed_dict={obsPh : obs[perm[start:end]], totalEstimatedDiscountedRewardPh : returns[perm[start:end]], VPrevPh:predVals[perm[start:end]], learningRateVfPh:learningRateVf})
 
                 start = end
-            if j==1:#log just first update when ratios are 1
-                klFirst = sess.run(KLcontraint,  feed_dict={obsPh : obs, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1]})
-                summaryKLFirst = sess.run(KLFirstSum, feed_dict={KLFirstPh:kl})
-                writer.add_summary(summaryKLFirst)
                 
-            kl = sess.run(KLcontraint,  feed_dict={obsPh : obs, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1]})
-            summaryKL = sess.run(KLSum, feed_dict={KLPh:kl})
-            writer.add_summary(summaryKL)
-        
+            if j==0:#log just first update when ratios are 1
+                klFirst = sess.run(KLcontraint, feed_dict={obsPh : obs, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1]})
+                summaryKLFirst = sess.run(KLFirstSum, feed_dict={KLFirstPh:klFirst})
+                writer.add_summary(summaryKLFirst ,e)   
+            if j == args.update_epochs - 1:
+                kl = sess.run(KLcontraint, feed_dict={obsPh : obs, oldActionMeanPh : additionalInfos[0], oldActionLogStdPh : additionalInfos[1]})
+                summaryKL = sess.run(KLSum, feed_dict={KLPh:kl})
+                writer.add_summary(summaryKL, e)
+    
+    
         updateEnd = time.time()      
         
         print("\tUpdate in epoch {} updated in {}".format(e, updateEnd-updateStart))    
@@ -363,11 +381,14 @@ with tf.Session(graph=graph) as sess:
         
     summaryLatestTrainRet = sess.run(epRewLatestMeanTrainSum, feed_dict = {epRewTrainPh:np.mean(epTotalTrainRews)})
     writer.add_summary(summaryLatestTrainRet)   
-    print("Testing agent without noise for {} episodes after training".format(args.test_episodes))
+    if args.wandb_log:
+        wandb.log({"episode_train_reward_mean" : np.mean(epTotalTrainRews)})
+        
+    print("Testing agent without noise for {} episodes after training".format(args.test_episodes_without_noise))
     osbTest = env.reset()
     testRets = []
     testRet = 0        
-    while len(testRets) < args.test_episodes+1:
+    while len(testRets) < args.test_episodes_without_noise+1:
         
         if args.render:
             env.envs[0].render() 

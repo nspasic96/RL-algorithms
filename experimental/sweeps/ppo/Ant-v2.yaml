@@ -1,0 +1,24 @@
+name: PPO-Ant-v2
+program: ./ppo_final.py
+method: grid
+metric:
+  name: episode_train_reward_mean
+  goal: maxmimize
+parameters:
+  gym-id:
+    value: "Ant-v2"
+  learning_rate_state_value:
+    values: [0.0005,0.0001,0.00005]
+  learning_rate_policy:
+    values: [0.0005,0.0001,0.00005]
+  grad_clipping:
+    values: [1, 0.5 , -1]
+  reward_clipping:
+    values: [5, 10]
+  lambd:
+    values: [0.85, 0.95]
+  wandb_log:
+    value: True
+  test_episodes_without_noise:
+    value: 1
+  

@@ -1,0 +1,33 @@
+name: plus-TRPO-Ant-v2
+program: ./trpo_final.py
+method: grid
+metric:
+  name: episode_train_reward_mean
+  goal: maxmimize
+parameters:
+  gym-id:
+    value: "Ant-v2"
+  delta:
+    values: [0.13, 0.07]
+  delta_final:
+    value: 0.04
+  learning_rate_state_value:
+    values: [0.0005,0.0001,0.00005]
+  plus_plus_reward_clipping:
+    valuess: [5,10]
+  plus_lr_annealing:
+    values: [True, False]
+  plus_plus_grad_clip:
+    values: [1, 0.5, -1]
+  plus_eps:
+    values: [-1, 0.2]
+  lambd:
+    values: [0.85, 0.95]
+  wandb_log:
+    value: True
+  plus:
+    value: True
+  plus_plus:
+    value: True
+  test_episodes_without_noise:
+    value: 1
