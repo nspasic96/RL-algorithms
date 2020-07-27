@@ -1,0 +1,47 @@
+name: PPO-39-Walker2d
+program: ./ppo_final.py
+project: walker-final
+method: grid
+metric:
+  name: episode_train_reward_mean
+  goal: maxmimize
+parameters:
+  gym-id:
+    value: "Walker2d-v2"
+  seed:
+    values: [1,2,3,4,5,6,7,8,9,10]
+  alg_name:
+    value: "PPO-39"
+  test_episodes_without_noise:
+    value: 1
+  render:
+    value: False
+  wandb_log:
+    value: True
+  learning_rate_state_value:
+    value: 0.0003
+  learning_rate_policy:
+    value: 0.0004
+    
+  val_eps:
+    value: 0.2
+  reward_scaling:
+    value: True
+  orthogonal_initialization:
+    value: False
+  lr_annealing:
+    value: True
+  adam_eps:
+    value: 1e-5
+  rew_clip:
+    value: 10    
+  obs_norm:
+    value: True
+  obs_clip:
+    value: 10
+  tanh_act:
+    value: True
+  grad_clip:
+    value: -1
+  norm_adv:
+    value: True

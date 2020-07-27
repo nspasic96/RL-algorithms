@@ -1,0 +1,46 @@
+name: TRPO+-1234-Hopper
+program: ./trpo_final.py
+project: hopper-final
+method: grid
+metric:
+  name: episode_train_reward_mean
+  goal: maxmimize
+parameters:
+  gym-id:
+    value: "Hopper-v2"
+  seed:
+    values: [1,2,3,4,5,6,7,8,9,10]
+  wandb_log:
+    value: True
+  alg_name:
+    value: "TRPO+-1234"
+  test_episodes_without_noise:
+    value: 1
+  render:
+    value: False  
+  delta:
+    value: 0.13
+  delta_final:
+    value: 0.04
+  lambd:
+    value: 0.95
+  learning_rate_state_value:
+    value: 0.0002 
+  reward_scaling:
+    value: False
+  orthogonal_initialization:
+    value: False
+  adam_eps:
+    value: 1e-5
+  rew_clip:
+    value: 10
+  obs_norm:
+    value: True
+  obs_clip:
+    value: 10
+  tanh_act:
+    value: True
+  grad_clip:
+    value: 1
+  norm_adv:
+    value: True

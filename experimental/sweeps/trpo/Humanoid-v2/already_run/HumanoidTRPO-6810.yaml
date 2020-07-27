@@ -1,0 +1,31 @@
+name: TRPO-6810-Humanoid
+program: ./trpo_final.py
+project: humanoid-final
+method: grid
+metric:
+  name: episode_train_reward_mean
+  goal: maxmimize
+parameters:
+  gym-id:
+    value: "Humanoid-v2"
+  seed:
+    values: [1,2,3,4,5,6,7,8,9,10]
+  wandb_log:
+    value: True
+  alg_name:
+    value: "TRPO-6810"
+  test_episodes_without_noise:
+    value: 1
+  render:
+    value: False  
+  delta:
+    value: 0.07
+  learning_rate_state_value:
+    value: 0.0003
+    
+  obs_norm:
+    value: True
+  tanh_act:
+    value: True
+  norm_adv:
+    value: True

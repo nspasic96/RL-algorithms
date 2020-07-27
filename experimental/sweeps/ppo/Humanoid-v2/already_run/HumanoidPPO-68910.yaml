@@ -1,0 +1,42 @@
+name: PPO-68910-Humanoid
+program: ./ppo_final.py
+project: humanoid-final
+method: grid
+metric:
+  name: episode_train_reward_mean
+  goal: maxmimize
+parameters:
+  gym-id:
+    value: "Humanoid-v2"
+  seed:
+    values: [1,2,3,4,5,6,7,8,9,10]
+  alg_name:
+    value: "PPO-68910"
+  test_episodes_without_noise:
+    value: 1
+  render:
+    value: False
+  wandb_log:
+    value: True
+  learning_rate_state_value:
+    value: 0.0001
+  learning_rate_policy:
+    value: 0.00015
+  val_eps:
+    value: 0.2
+  reward_scaling:
+    value: True
+  orthogonal_initialization:
+    value: True
+  lr_annealing:
+    value: True
+  adam_eps:
+    value: 1e-5
+  rew_clip:
+    value: 10    
+  obs_clip:
+    value: 10
+  tanh_act:
+    value: False
+  norm_adv:
+    value: False

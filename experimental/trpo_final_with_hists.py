@@ -286,7 +286,11 @@ with tf.Session(graph=graph) as sess:
     nextDone = 0      
     epLen = 0
     epTotalRew = 0
+    totalEpisodes = 0
     epTotalTrainRews = deque(maxlen = args.test_episodes_with_noise)
+    
+    statistics = []
+    statistics.append(Statistics(args.epoch_len, inputLength, "observation", True))
 
     #algorithm
     for e in range(args.epochs):    
@@ -305,6 +309,7 @@ with tf.Session(graph=graph) as sess:
         epochSt = time.time()
         for l in range(args.epoch_len):
             
+            statistics[0].addValue(nextObs if (l == 0 and e==0) else nextObss)
             obs[l] = nextObs.copy() 
             dones[l] = nextDone
             
@@ -328,7 +333,7 @@ with tf.Session(graph=graph) as sess:
                 writer.add_summary(summaryLen, globalStep)                
                 epTotalTrainRews.append(epTotalRew)
                 epLen=0
-                epTotalRew=0
+                epTotalRew=0                
                 
             epLen += 1
             epTotalRew += infos["origRew"]   
@@ -448,12 +453,26 @@ with tf.Session(graph=graph) as sess:
         svLossEnd = time.time()      
         
         print("\tState value loss in epoch {} calculated in {}".format(e, svLossEnd-svLossStart))
-              
+        
+        feedD = {}
+        total = 0
+        histSummaries = []
+        for hist in statistics:
+            values = hist.getValues()
+            for i in range(hist.dimensions):
+                feedD[hist.phs[i]] = values[i]
+            total += hist.dimensions
+            histSummaries.extend(hist.summaries)
+
+        summEval = sess.run(histSummaries, feed_dict = feedD)
+        for i in range(total):
+            writer.add_summary(summEval[i], global_step=e)
+        
         summarySVm, summarySurrogateDiff, summaryKL = sess.run([SVLossSummary, SurrogateDiffSum, KLSum], feed_dict = {SVLossPh:SVLoss, SurrogateDiffPh:LlossNew - LlossOld, KLPh:kl})
         writer.add_summary(summarySVm, e)
         writer.add_summary(summarySurrogateDiff, e)
-        writer.add_summary(summaryKL, e)        
-    
+        writer.add_summary(summaryKL, e)  
+            
         epochEnd = time.time()
         print("Epoch {} ended in {}".format(e, epochEnd-epochSt))
       
