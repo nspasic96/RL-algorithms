@@ -1,5 +1,6 @@
-name: minimal-PPO-Ant-v2
+name: minimal2-PPO-Ant-v2
 program: ./ppo_final.py
+project: ant-final
 method: grid
 metric:
   name: episode_train_reward_mean
@@ -7,15 +8,24 @@ metric:
 parameters:
   gym-id:
     value: "Ant-v2"
+  wandb_log:
+    value: True
+  alg_name:
+    value: "PPO-Ant-Minimal2"
+  seed:
+    values: [1,2,3]
   learning_rate_state_value:
     values: [0.0005,0.0001,0.00005]
   learning_rate_policy:
     values: [0.0005,0.0001,0.00005]
   lambd:
     values: [0.85, 0.95]
-  wandb_log:
+    
+  obs_norm:
     value: True
-  minimal:
+  tanh_act:
+    values: [True, False]
+  norm_adv:
     value: True
   test_episodes_without_noise:
     value: 1

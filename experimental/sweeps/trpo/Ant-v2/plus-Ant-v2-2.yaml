@@ -1,5 +1,5 @@
-name: PPO2-Ant-v2
-program: ./ppo_final.py
+name: plus3-TRPO-Ant-v2
+program: ./trpo_final.py
 project: ant-final
 method: grid
 metric:
@@ -11,18 +11,19 @@ parameters:
   wandb_log:
     value: True
   alg_name:
-    value: "PPO2-Ant"
+    value: "TRPO3-Ant-plus"
   seed:
     values: [1,2,3]
+  delta:
+    values: [0.13, 0.07]
+  delta_final:
+    value: 0.04
+  lambd:
+    value: 0.85
   learning_rate_state_value:
     values: [0.0005,0.00005]
-  learning_rate_policy:
-    values: [0.0005,0.00005]
-  lambd:
-    value: 0.95
-  
   val_eps:
-    values: [-0.2,0.2]
+    values: [-1, 0.2]
   reward_scaling:
     value: True
   orthogonal_initialization:
@@ -30,19 +31,18 @@ parameters:
   adam_eps:
     value: 0.00001
   lr_annealing:
-    values: [True, False]
+    values: [True, False] 
   obs_norm:
     value: True 
   obs_clip:
     value: 10
   rew_clip:
-    value: 10 
+    value: 10
   tanh_act:
-    values: [True, False]   
+    values: [True, False] 
   grad_clip:
     values: [0.5 , -1]
   norm_adv:
     value: True
   test_episodes_without_noise:
     value: 1
-  

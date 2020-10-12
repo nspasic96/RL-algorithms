@@ -1,5 +1,6 @@
-name: plus-TRPO-Ant-v2
+name: plus2-TRPO-Ant-v2
 program: ./trpo_final.py
+project: ant-final
 method: grid
 metric:
   name: episode_train_reward_mean
@@ -7,27 +8,43 @@ metric:
 parameters:
   gym-id:
     value: "Ant-v2"
+  wandb_log:
+    value: True
+  alg_name:
+    value: "TRPO2-Ant-plus"
+  seed:
+    values: [1,2,3]
   delta:
     values: [0.13, 0.07]
   delta_final:
     value: 0.04
-  learning_rate_state_value:
-    values: [0.0005,0.0001,0.00005]
-  plus_plus_reward_clipping:
-    valuess: [5,10]
-  plus_lr_annealing:
-    values: [True, False]
-  plus_plus_grad_clip:
-    values: [1, 0.5, -1]
-  plus_eps:
-    values: [-1, 0.2]
   lambd:
-    values: [0.85, 0.95]
-  wandb_log:
+    value: 0.95
+  learning_rate_state_value:
+    values: [0.0005,0.00005]
+    
+  
+  val_eps:
+    values: [-1, 0.2]
+  reward_scaling:
     value: True
-  plus:
-    value: True
-  plus_plus:
+  orthogonal_initialization:
+    values: [True, False] 
+  adam_eps:
+    value: 0.00001
+  lr_annealing:
+    values: [True, False] 
+  obs_norm:
+    value: True 
+  obs_clip:
+    value: 10
+  rew_clip:
+    value: 10
+  tanh_act:
+    values: [True, False] 
+  grad_clip:
+    values: [0.5 , -1]
+  norm_adv:
     value: True
   test_episodes_without_noise:
     value: 1
