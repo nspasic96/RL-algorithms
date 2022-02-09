@@ -4,6 +4,6 @@ scikit-image
 numpy
 gym==0.15.4
 tensorflow==1.15.2
-tensorflow-gpu==1.15.2
+tensorflow-gpu==2.5.3
 gym[atari]
 -e git+http://github.com/benelot/pybullet-gym.git#egg=pybulletgym
